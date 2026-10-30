@@ -1,0 +1,19 @@
+# One-click deploy on Render (https://render.com): New > Blueprint > pick this repo.
+services:
+  - type: web
+    name: bei-cin-lah
+    runtime: node
+    plan: starter            # a persistent disk needs a paid instance
+    buildCommand: echo "nothing to build"
+    startCommand: node server.js
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATA_DIR
+        value: /var/data
+      - key: ANTHROPIC_API_KEY   # optional: switches on receipt reading
+        sync: false
+    disk:
+      name: bei-cin-lah-data
+      mountPath: /var/data
+      sizeGB: 1

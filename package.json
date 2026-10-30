@@ -1,0 +1,15 @@
+{
+  "name": "bei-cin-lah",
+  "version": "1.1.0",
+  "description": "Split restaurant bills with friends. Scan the receipt, pick your dishes, pay by DuitNow.",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^11.1.7"
+  },
+  "engines": { "node": ">=22.13" }
+}

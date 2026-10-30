@@ -1,0 +1,69 @@
+# Bei Cin Lah
+
+Split restaurant bills with friends. The payer adds a receipt and a DuitNow QR, friends open a link, type their
+name (no account, no password), tick what they ate, and see exactly what they owe with service charge and SST
+included. They pay by DuitNow, upload the slip, and the payer confirms.
+
+## Put it online with Netlify
+
+You need a free GitHub account and a free Netlify account. About 10 minutes.
+
+1. **Upload the code to GitHub.** On https://github.com click New repository, name it `bei-cin-lah`, then
+   "uploading an existing file" and drag in everything from this folder (keep the `public`, `lib` and
+   `netlify` folders as they are). Click Commit.
+2. **Connect Netlify.** On https://app.netlify.com choose Add new site > Import an existing project > GitHub,
+   and pick the repository. Netlify reads `netlify.toml`, so leave the build settings as they are and click Deploy.
+3. **Open your site.** Netlify gives you an address like `https://something.netlify.app`. Open it, tap New bill,
+   and send the bill link to your friends. You can change the address under Site configuration > Domain management.
+4. **Optional, automatic receipt reading.** Get an API key at https://console.anthropic.com. In Netlify go to
+   Site configuration > Environment variables, add `ANTHROPIC_API_KEY`, then trigger a new deploy. Each scan
+   costs a few sen. Without the key, people type the items by hand.
+
+Bills are stored in Netlify Blobs, which Netlify provides with your site. Nothing else to set up.
+
+**First check after deploying:** create a bill on your phone, then open its link on a second phone or a private
+browser window, join with another name and tick a dish. If that works, everything is connected.
+
+Netlify's free plan should be enough for friends and family, but check Netlify's current limits for functions
+and storage on their pricing page. A function has a time limit, so if "Read receipt" ever times out on a
+slow connection, type the items instead.
+
+## Other ways to run it
+
+- **On your computer:** install Node.js 22.13 or newer, run `node server.js` in this folder, open
+  http://localhost:3000. Bills are saved in the `data` folder. No npm install needed.
+- **A normal server (Render, Railway, Fly.io):** run `node server.js` with Node 22 and keep `DATA_DIR` on a
+  persistent disk. `render.yaml` is included for Render, which needs a paid instance for the disk.
+
+## Settings (environment variables)
+
+| Name | Purpose |
+| --- | --- |
+| `ANTHROPIC_API_KEY` | Optional. Turns on "Read receipt". |
+| `ANTHROPIC_MODEL` | Optional. Defaults to `claude-sonnet-5-5`. |
+| `DATA_DIR` | Self-hosting only. Folder for the database file. |
+| `PORT` | Self-hosting only. Defaults to 3000. |
+
+Scans are limited to 15 per hour per visitor to protect your bill.
+
+## How it works
+
+- `lib/core.js`: the whole API, the same code on Netlify and on a normal server.
+- `netlify/functions/api.mjs` and `lib/blobs-store.js`: the Netlify side, storing bills in Netlify Blobs.
+- `server.js`: the self-hosted side, storing bills in a SQLite file.
+- `public/split.js`: the split maths, shared by server and browser. Amounts are whole sen so shares always add
+  up to the receipt total.
+- `public/app.js`, `index.html`, `style.css`: the website.
+- `node test.js`: checks the API end to end, including two people ticking dishes at the same moment.
+
+## Things to know
+
+- **Who can do what.** The person who creates a bill is the payer and controls it from that phone. Use
+  "Copy my payer link" on the bill to keep a private link that restores control on another phone. Anyone with
+  the normal bill link can join and pick dishes. Payment slips are visible only to the payer and the person
+  who uploaded them. The QR and receipt photo are visible to anyone with the bill link.
+- **Reminders.** "Remind" and "Remind everyone" write a ready message to send on WhatsApp, and people who open
+  the bill see a banner if they still owe. Automatic WhatsApp or phone push messages are not built yet. They
+  would need a messaging service added to the server.
+- **Money.** The app never moves money. People pay in their own banking app and upload the slip.
+- **Bill links.** Treat them like a private group link: anyone who has it can join the bill.
