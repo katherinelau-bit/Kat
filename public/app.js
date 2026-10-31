@@ -254,7 +254,7 @@ function totalsHtml(d) {
 function viewNew() {
   var d = S.draft;
   var h = topbar() + '<button class="btn ghost" data-nav="/">← Your bills</button><h2>New bill</h2>';
-  h += '<div class="card"><h3>1. Receipt</h3><div class="drop"><div class="row">' + (d.receipt ? '<img class="thumb" src="' + d.receipt + '" alt="Receipt photo">' : '') + '<div><b>' + (d.receipt ? 'Receipt attached' : 'Add a photo of the receipt') + '</b><div class="small muted">' + (S.cfg.scan ? 'The items, service charge and SST are read for you.' : 'Type the items below. Friends can view the photo.') + '</div></div></div><div class="row"><button class="btn" data-act="pickreceipt">' + (d.receipt ? 'Change photo' : 'Choose photo') + '</button>' + (d.scanFile && S.cfg.scan ? '<button class="btn primary" data-act="scan"' + (S.scanning ? ' disabled' : '') + '>' + (S.scanning ? 'Reading…' : 'Read receipt') + '</button>' : '') + '</div></div>' +
+  h += '<div class="card"><h3>1. Receipt</h3><div class="drop"><div class="row">' + (d.receipt ? '<img class="thumb" src="' + d.receipt + '" alt="Receipt photo">' : '') + '<div><b>' + (d.receipt ? 'Receipt attached' : 'Add a photo of the receipt') + '</b><div class="small muted">' + 'The items, service charge and SST are read for you. Check them before you create the bill. Friends can view the photo.' + '</div></div></div><div class="row"><button class="btn" data-act="pickreceipt">' + (d.receipt ? 'Change photo' : 'Choose photo') + '</button>' + (d.scanFile ? '<button class="btn primary" data-act="scan"' + (S.scanning ? ' disabled' : '') + '>' + (S.scanning ? 'Reading…' : 'Read receipt') + '</button>' : '') + '</div></div>' +
     (d.scanNote ? '<p class="small" style="color:var(--warn)">' + esc(d.scanNote) + '</p>' : '') + '</div>';
   h += '<div class="card"><h3>2. Items</h3><div class="two"><div class="field"><label for="f-title">Bill name</label><input type="text" id="f-title" data-f="title" maxlength="80" value="' + esc(d.title) + '" placeholder="e.g. Thai dinner"></div><div class="field"><label for="f-date">Date</label><input type="date" id="f-date" data-f="date" value="' + esc(d.date) + '"></div><div class="field"><label for="f-payer">Your name (you paid)</label><input type="text" id="f-payer" data-f="payerName" maxlength="40" value="' + esc(d.payerName) + '" placeholder="e.g. Katherine"></div></div>';
   h += '<div class="items"><div class="irow h"><span>Item</span><span>Qty</span><span>Each (RM)</span><span style="text-align:right">Total</span><span></span></div>';
@@ -285,12 +285,47 @@ function showReminder(uids, title) {
   S.modal = { title: title, text: t, wa: 'https://wa.me/?text=' + encodeURIComponent(t) }; paintModal();
   bapi('POST', '/remind', { memberIds: uids }).then(function (j) { setBill(j); if (!S.modal) render(); }).catch(function () {});
 }
+/* ---------- receipt reading ----------
+ * Free and on the phone with Tesseract.js (served from /ocr, loaded on first use, language file cached by the browser).
+ * If the server's Claude reader is switched on it is tried first, and the phone takes over if it fails. */
+var ocr = null;
+function loadScript(src) { return new Promise(function (ok, no) { var s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); }); }
+function scanLabel(t) { var b = document.querySelector('[data-act="scan"]'); if (b) b.textContent = t; }
+function ocrWorker() {
+  if (!ocr) ocr = (async function () {
+    if (!window.Tesseract) await loadScript('/ocr/tesseract.min.js');
+    var w = await window.Tesseract.createWorker('eng', 1, { workerPath: '/ocr/worker.min.js', corePath: '/ocr', langPath: '/ocr', workerBlobURL: false, gzip: true,
+      logger: function (m) { scanLabel(m.status === 'recognizing text' ? 'Reading… ' + Math.round(m.progress * 100) + '%' : 'Getting ready…'); } });
+    await w.setParameters({ preserve_interword_spaces: '1' });
+    return w;
+  })().catch(function (e) { ocr = null; throw e; });
+  return ocr;
+}
+async function readOnPhone(file) {
+  var bmp = await createImageBitmap(file);
+  // Text reads best at roughly 1500-2000 px, in grey with extra contrast.
+  var s = Math.min(2, 1800 / Math.max(bmp.width, bmp.height));
+  var c = document.createElement('canvas'); c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+  var x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
+  x.filter = 'grayscale(1) contrast(1.4)'; x.drawImage(bmp, 0, 0, c.width, c.height);
+  var P = window.ReceiptParse, w = await ocrWorker(), r = null;
+  // Layout mode 6 (one block of text) usually keeps an item and its price together; mode 4 (one column) is the second try.
+  // Each pass is read twice, from the text as Tesseract lines it up and from word positions, and the reading that adds up best wins.
+  for (var psm of ['6', '4']) {
+    await w.setParameters({ tessedit_pageseg_mode: psm });
+    var out = (await w.recognize(c, {}, { text: true, blocks: true })).data;
+    r = P.best([r, P.parse(out.text), P.parse(P.rowsFromBlocks(out.blocks))]);
+    if (P.balanced(r)) break;
+  }
+  return r;
+}
 async function doScan() {
   var d = S.draft; if (!d.scanFile || S.scanning) return;
   S.scanning = true; d.scanNote = ''; render();
   try {
-    var img = await toJpeg(d.scanFile, 1400, 600000);
-    var r = await api('POST', '/api/scan', { image: b64(img) });
+    var r = null;
+    if (S.cfg.scan) { try { r = await api('POST', '/api/scan', { image: b64(await toJpeg(d.scanFile, 1400, 600000)) }); } catch (e) { r = null; } }
+    if (!r || !r.items.length) r = await readOnPhone(d.scanFile);
     if (!r.items.length) throw new Error('empty');
     d.items = r.items.map(function (i) { return { name: i.name, qty: String(i.qty), price: fixed(i.each), line: i.line }; });
     d.service = r.service ? fixed(r.service) : ''; d.sst = r.sst ? fixed(r.sst) : ''; d.rounding = r.rounding ? fixed(r.rounding) : '';
@@ -397,7 +432,7 @@ window.addEventListener('popstate', function () { route(false); });
 
 $('#fileReceipt').addEventListener('change', async function (e) {
   var f = e.target.files && e.target.files[0]; e.target.value = ''; if (!f || !S.draft) return;
-  try { S.draft.receipt = await toJpeg(f, 700, 70000); S.draft.scanFile = f; S.draft.scanNote = ''; render(); if (S.cfg.scan) doScan(); }
+  try { S.draft.receipt = await toJpeg(f, 700, 70000); S.draft.scanFile = f; S.draft.scanNote = ''; render(); doScan(); }
   catch (x) { toast('That file is not a readable image'); }
 });
 $('#fileQR').addEventListener('change', async function (e) {

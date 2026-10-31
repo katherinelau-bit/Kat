@@ -15,9 +15,12 @@ You need a free GitHub account and a free Netlify account. About 10 minutes.
    and pick the repository. Netlify reads `netlify.toml`, so leave the build settings as they are and click Deploy.
 3. **Open your site.** Netlify gives you an address like `https://something.netlify.app`. Open it, tap New bill,
    and send the bill link to your friends. You can change the address under Site configuration > Domain management.
-4. **Optional, automatic receipt reading.** Get an API key at https://console.anthropic.com. In Netlify go to
-   Site configuration > Environment variables, add `ANTHROPIC_API_KEY`, then trigger a new deploy. Each scan
-   costs a few sen. Without the key, people type the items by hand.
+4. **Receipt reading is free and already on.** When the payer chooses a receipt photo, the phone reads it
+   (Tesseract.js, no account or key) and fills in the item names, quantities, prices, service charge, SST and
+   rounding. It works best on a flat, well-lit, straight photo; always check the items before creating the bill.
+   The first scan on a phone downloads about 8 MB once; later scans are instant and work offline.
+   Optional: for messier receipts, add an `ANTHROPIC_API_KEY` in Netlify (Site configuration > Environment
+   variables) and redeploy. Claude then reads receipts first (a few sen per scan) and the phone takes over if it fails.
 
 Bills are stored in Netlify Blobs, which Netlify provides with your site. Nothing else to set up.
 
@@ -25,13 +28,13 @@ Bills are stored in Netlify Blobs, which Netlify provides with your site. Nothin
 browser window, join with another name and tick a dish. If that works, everything is connected.
 
 Netlify's free plan should be enough for friends and family, but check Netlify's current limits for functions
-and storage on their pricing page. A function has a time limit, so if "Read receipt" ever times out on a
-slow connection, type the items instead.
+and storage on their pricing page.
 
 ## Other ways to run it
 
-- **On your computer:** install Node.js 22.13 or newer, run `node server.js` in this folder, open
-  http://localhost:3000. Bills are saved in the `data` folder. No npm install needed.
+- **On your computer:** install Node.js 22.13 or newer, run `npm install` and `node scripts/copy-ocr.js` once
+  (for receipt reading), then `node server.js` in this folder and open http://localhost:3000. Bills are saved
+  in the `data` folder.
 - **A normal server (Render, Railway, Fly.io):** run `node server.js` with Node 22 and keep `DATA_DIR` on a
   persistent disk. `render.yaml` is included for Render, which needs a paid instance for the disk.
 
@@ -39,12 +42,12 @@ slow connection, type the items instead.
 
 | Name | Purpose |
 | --- | --- |
-| `ANTHROPIC_API_KEY` | Optional. Turns on "Read receipt". |
+| `ANTHROPIC_API_KEY` | Optional. Reads receipts with Claude first, instead of only on the phone. |
 | `ANTHROPIC_MODEL` | Optional. Defaults to `claude-sonnet-5-5`. |
 | `DATA_DIR` | Self-hosting only. Folder for the database file. |
 | `PORT` | Self-hosting only. Defaults to 3000. |
 
-Scans are limited to 15 per hour per visitor to protect your bill.
+Claude scans are limited to 15 per hour per visitor to protect your bill. Scans on the phone are free and unlimited.
 
 ## How it works
 
@@ -53,8 +56,10 @@ Scans are limited to 15 per hour per visitor to protect your bill.
 - `server.js`: the self-hosted side, storing bills in a SQLite file.
 - `public/split.js`: the split maths, shared by server and browser. Amounts are whole sen so shares always add
   up to the receipt total.
+- `public/receipt-parse.js`: turns the text read off a receipt photo into items and charges.
+- `scripts/copy-ocr.js`: copies the on-phone receipt reader into `public/ocr` (Netlify's build step).
 - `public/app.js`, `index.html`, `style.css`: the website.
-- `node test.js`: checks the API end to end, including two people ticking dishes at the same moment.
+- `node test.js`: checks receipt parsing and the API end to end, including two people ticking dishes at the same moment.
 
 ## Things to know
 

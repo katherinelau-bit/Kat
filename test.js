@@ -81,7 +81,78 @@ async function suite(name, call) {
   console.log('passed:', name);
 }
 
+function receiptParsing() {
+  const { parse } = require('./public/receipt-parse.js');
+  const pick = (r) => r.items.map((i) => `${i.qty}|${i.name}|${i.line}`);
+
+  // "qty x name  amount" lines, Malaysian charges, negative rounding
+  let r = parse(`RESTORAN NASI KANDAR SELERA
+Jalan SS2/24, Petaling Jaya
+Date: 30/10/2026  Time: 20:14
+----------------------------
+2 x Roti Canai          4.40
+1 x Nasi Lemak Ayam    13.50
+1 x Mee Goreng Mamak    9.00
+3 x Teh Tarik           8.40
+1 x Milo Ais            4.20
+1 x Maggi Goreng        8.50
+----------------------------
+Subtotal               48.00
+Service Charge 10%      4.80
+SST 6%                  3.17
+Rounding               -0.02
+TOTAL (RM)             55.95
+Cash                   60.00
+Change                  4.05`);
+  assert.deepEqual(pick(r), ['2|Roti Canai|440', '1|Nasi Lemak Ayam|1350', '1|Mee Goreng Mamak|900', '3|Teh Tarik|840', '1|Milo Ais|420', '1|Maggi Goreng|850']);
+  assert.equal(r.items[0].each, 220);
+  assert.deepEqual([r.service, r.sst, r.rounding, r.total, r.date, r.merchant], [480, 317, -2, 5595, '2026-10-30', 'RESTORAN NASI KANDAR SELERA']);
+
+  // column receipts: name, qty, unit price, amount; tax codes; Malay labels; "Service Tax" is SST
+  r = parse(`Kopitiam Ah Seng Sdn Bhd
+2026-07-12 13:05
+Char Kuey Teow   2   9.50   19.00 SR
+Kopi O Peng      1   2.80    2.80 SR
+Wantan Mee       3 @ 8.00   24.00
+Jumlah Kecil            45.80
+Caj Perkhidmatan 10%     4.58
+Service Tax 6%           3.02
+Pembundaran              0.00
+Jumlah                  53.40`);
+  assert.deepEqual(pick(r), ['2|Char Kuey Teow|1900', '1|Kopi O Peng|280', '3|Wantan Mee|2400']);
+  assert.deepEqual([r.service, r.sst, r.total, r.date], [458, 302, 5340, '2026-07-12']);
+
+  // OCR noise: O for 0, item split over two lines, item codes, "Name x2", card payment lines ignored
+  r = parse(`MAMAK CORNER
+A102 Ayam Goreng Berempah
+  2 x 7.5O      15.00
+Nasi Putih x2   4.OO
+Teh O Ais       2.20
+Total          21.20
+VISA ****1234  21.20`);
+  assert.deepEqual(pick(r), ['2|Ayam Goreng Berempah|1500', '2|Nasi Putih|400', '1|Teh O Ais|220']);
+  assert.equal(r.total, 2120);
+  assert.deepEqual(parse('').items, []);
+  assert.deepEqual(pick(parse('Kopi O Peng 3 280   8.40')), ['3|Kopi O Peng|840'], 'unit price that lost its decimal point');
+
+  // A photo tilted 3 degrees where the reader split the price column into separate lines:
+  // rebuilding rows from word positions puts each price back next to its item.
+  const { rowsFromBlocks, best, balanced } = require('./public/receipt-parse.js');
+  const k = Math.tan(3 * Math.PI / 180), word = (text, x, row) => ({ text, bbox: { x0: x, x1: x + 20 * text.length, y0: 100 + row * 50 + k * x, y1: 130 + row * 50 + k * x } });
+  const rows = [['Roti', 'Canai'], ['Teh', 'Tarik'], ['SST', '6%'], ['TOTAL']];
+  const prices = ['4.40', '8.40', '0.77', '13.57'];
+  const blocks = [{ paragraphs: [
+    { lines: rows.map((ws, i) => ({ baseline: { x0: 40, y0: 130 + i * 50 + k * 40, x1: 400, y1: 130 + i * 50 + k * 400 }, words: ws.map((t, j) => word(t, 40 + j * 120, i)) })) },
+    { lines: prices.map((t, i) => ({ baseline: { x0: 900, y0: 0, x1: 980, y1: 0 }, words: [word(t, 900, i)] })) }] }];
+  assert.equal(rowsFromBlocks(blocks), 'Roti Canai 4.40\nTeh Tarik 8.40\nSST 6% 0.77\nTOTAL 13.57');
+  const split = parse('Roti Canai\nTeh Tarik\nSST 6%\nTOTAL\n4.40\n8.40\n0.77\n13.57'), joined = parse(rowsFromBlocks(blocks));
+  assert.equal(best([null, split, joined]), joined);
+  assert.ok(balanced(joined) && !balanced(split));
+  console.log('passed: receipt text parsing');
+}
+
 (async () => {
+  receiptParsing();
   await new Promise((r) => server.listen(0, r));
   const base = 'http://localhost:' + server.address().port;
   const viaHttp = async (method, url, body, token) => {
