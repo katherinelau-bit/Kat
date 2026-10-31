@@ -104,6 +104,14 @@ async function suite(name, call) {
   assert.equal(wjNow.pay.status, 'sent');
   assert.equal(wjNow.pay.amount, Split.calc(eb).per[wj.memberId].total);
 
+  // The payer changes the DuitNow QR after creating the bill; friends cannot.
+  const QR2 = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe1]), Buffer.alloc(60, 2)]).toString('base64');
+  assert.equal((await call('POST', '/api/bills/' + id + '/qr', { image: QR2 }, wj.token)).status, 403);
+  assert.equal((await call('POST', '/api/bills/' + id + '/qr', { image: 'bm90LWpwZWc=' }, owner)).status, 400);
+  r = await call('POST', '/api/bills/' + id + '/qr', { image: QR2 }, owner);
+  assert.equal(r.status, 200); assert.equal(r.body.bill.hasQr, true); assert.equal(typeof r.body.bill.qrAt, 'number');
+  assert.equal((await call('GET', '/api/bills/' + id + '/img/qr')).body.length, 64);
+
   assert.equal((await call('DELETE', '/api/bills/' + id, null, wj.token)).status, 403);
   assert.equal((await call('DELETE', '/api/bills/' + id, null, owner)).status, 200);
   assert.equal((await call('GET', '/api/bills/' + id)).status, 404);
