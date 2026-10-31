@@ -53,7 +53,7 @@ async function toRequest(req, url) {
   return new Request(url.href, { method: req.method, headers, body: hasBody ? Buffer.concat(chunks) : undefined });
 }
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json', '.gz': 'application/gzip' };
 function serveStatic(res, pathname) {
   const spa = pathname === '/' || pathname === '/new' || /^\/b\/[a-z0-9]+(\/edit)?$/.test(pathname);
   const file = path.normalize(path.join(PUB, spa ? '/index.html' : pathname));

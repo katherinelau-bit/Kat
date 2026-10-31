@@ -9,7 +9,7 @@ function ago(ms) { var m = Math.round((Date.now() - ms) / 60000); if (m < 1) ret
 function hue(id) { var h = 0; for (var i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360; return h; }
 
 var S = { cfg: { scan: false }, store: loadStore(), view: 'home', billId: null, bill: null, home: [], homeLoaded: false, err: '',
-  draft: null, acting: null, modal: null, busy: 0, chain: Promise.resolve(), scanning: false, creating: false, confirmDel: null, toastT: null, toastMsg: '' };
+  draft: null, acting: null, modal: null, busy: 0, chain: Promise.resolve(), scanning: false, creating: false, slipChecks: {}, slipRun: false, confirmDel: null, toastT: null, toastMsg: '' };
 
 function loadStore() { try { var o = JSON.parse(localStorage.getItem('bcl.v1')); if (o && o.bills) return o; } catch (e) {} return { bills: {}, name: '' }; }
 function saveStore() { try { localStorage.setItem('bcl.v1', JSON.stringify(S.store)); } catch (e) {} }
@@ -231,6 +231,7 @@ function viewBill() {
     var link = shareUrl(b), msg = 'Hi! Please pick what you ate for "' + b.title + '" and pay me by DuitNow here: ' + link;
     h += '<div class="card"><h3>Send this link to your friends</h3><div class="linkbox"><input type="text" id="sharelink" readonly aria-label="Bill link" value="' + esc(link) + '"><button class="btn" data-act="copylink">Copy link</button><a class="btn primary" href="https://wa.me/?text=' + encodeURIComponent(msg) + '" target="_blank" rel="noopener" style="text-decoration:none">WhatsApp</a></div><p class="small muted">Friends open the link, type their name and pick their dishes. No sign-up.</p></div>';
     if (!b.hasQr) h += '<div class="alert"><span>Add your DuitNow QR so friends can scan it and pay you.</span><button class="btn small primary" data-act="addqr">Add DuitNow QR</button></div>';
+    h += notifyHtml(b);
     h += '<div class="card"><h3>People on this bill</h3><div class="chips">' + b.members.map(function (m) { return '<button class="btn small' + (m.id === ac ? ' primary' : '') + '" data-act="acting" data-uid="' + m.id + '">' + esc(m.id === meId ? 'You' : m.name) + '</button>'; }).join('') + '</div><p class="small muted">Tap a name, then tap the dishes that person ate. A dish picked by 2 or more people is split equally. Add friends here if you want to pick for them.</p><div class="row"><input type="text" id="gname" aria-label="Friend name" placeholder="Friend name" maxlength="40"><button class="btn" data-act="addguest">Add friend</button></div>' + ((!acm.isPayer && ac !== meId) ? '<div><button class="btn small" data-act="rmguest" style="color:var(--bad)">Remove ' + esc(acm.name) + '</button></div>' : '') + '</div>';
   }
 
@@ -267,17 +268,17 @@ function viewBill() {
     h += '</div>';
   } else if (ac === meId) h += '<div class="card"><p class="muted">Tap the dishes you ate above. Your share, with service charge and SST, appears here.</p></div>';
 
-  h += '<div class="card"><div class="row between"><h3>Who has paid</h3>' + (isPayer ? '<button class="btn small" data-act="remindall">Remind everyone</button>' : '') + '</div><div>';
+  h += '<div class="card"><div class="row between"><h3>Who has paid</h3>' + (isPayer ? '<span class="row" style="gap:6px;flex-wrap:wrap">' + (matchingSlips(b).length ? '<button class="btn small primary" data-act="confirmmatching">Confirm all matching (' + matchingSlips(b).length + ')</button>' : '') + '<button class="btn small" data-act="remindall">Remind everyone</button></span>' : '') + '</div><div>';
   b.members.forEach(function (m) {
     var s = c.per[m.id], st = m.pay.status;
     var acts = '';
     if (isPayer && !m.isPayer) {
       if (st === 'sent') acts = '<button class="btn small primary" data-act="confirm" data-uid="' + m.id + '">Confirm received</button><button class="btn small" data-act="viewslip" data-uid="' + m.id + '">View slip</button>';
-      else if (st === 'paid') acts = '<button class="btn small" data-act="unconfirm" data-uid="' + m.id + '">Undo</button>';
+      else if (st === 'paid') acts = '<button class="btn small" data-act="unconfirm" data-uid="' + m.id + '">Undo</button>' + (m.hasSlip ? '<button class="btn small" data-act="viewslip" data-uid="' + m.id + '">View slip</button>' : '');
       else { if (s) acts += '<button class="btn small" data-act="markpaid" data-uid="' + m.id + '">Mark paid (cash)</button>'; acts += '<button class="btn small" data-act="remind" data-uid="' + m.id + '">Remind</button>'; }
       if (m.claimed) acts += '<button class="btn small" data-act="resetlink" data-uid="' + m.id + '">Reset link</button>';
     }
-    h += '<div class="person">' + av(b, m.id) + '<div class="grow"><div><b>' + esc(m.name) + (m.id === meId ? ' (you)' : '') + '</b></div><div class="small muted mono">' + (s ? fmt(owedBy(m, c)) : 'No items yet') + (m.remind && st === 'unpaid' && !m.isPayer ? ' · reminded ' + m.remind.count + '×, last ' + ago(m.remind.at) : '') + '</div></div>' + statusPill(m, c, m.isPayer) + (acts ? '<div class="acts" style="width:100%;padding-left:38px">' + acts + '</div>' : '') + '</div>';
+    h += '<div class="person">' + av(b, m.id) + '<div class="grow"><div><b>' + esc(m.name) + (m.id === meId ? ' (you)' : '') + '</b></div><div class="small muted mono">' + (s ? fmt(owedBy(m, c)) : 'No items yet') + (m.remind && st === 'unpaid' && !m.isPayer ? ' · reminded ' + m.remind.count + '×, last ' + ago(m.remind.at) : '') + '</div>' + (isPayer && st === 'sent' ? slipCheckHtml(m) : '') + '</div>' + statusPill(m, c, m.isPayer) + (acts ? '<div class="acts" style="width:100%;padding-left:38px">' + acts + '</div>' : '') + '</div>';
   });
   h += '</div></div>';
   h += '<div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="summary">Share summary</button>' + (isPayer ? '<button class="btn small" data-nav="/b/' + b.id + '/edit">Edit items</button>' + (b.hasQr ? '<button class="btn small" data-act="addqr">Change DuitNow QR</button>' : '') + '<button class="btn small" data-act="copyadmin">Copy my payer link (keep private)</button><button class="btn small" data-act="delete" style="color:var(--bad)">Delete bill</button>' : '') + '</div>';
@@ -310,6 +311,7 @@ function render() {
   var a = $('#app'); if (!a) return;
   a.innerHTML = S.view === 'new' ? viewNew() : S.view === 'bill' ? viewBill() : viewHome();
   if (S.view === 'new') saveDraft();
+  if (S.view === 'bill' && S.bill) checkSlips(S.bill);
 }
 
 /* ---------- actions ---------- */
@@ -441,6 +443,75 @@ async function readOnPhone(file) {
   }
   return r;
 }
+/* ---------- notifications ("ring me when someone pays") ----------
+ * The payer's phone subscribes once per bill; the server sends "Victor sent RM 25.40" when a slip arrives.
+ * iPhones allow this only for the app opened from the Home Screen. */
+function pushReady() { return !!(S.cfg.push && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window); }
+function notifyHtml(b) {
+  if (b.notify) return '<div class="alert info"><span>You get a notification when someone sends a payment slip.</span><button class="btn small" data-act="notifyoff">Turn off</button></div>';
+  if (pushReady()) return '<div class="alert info"><span>Get a notification on this phone when someone sends a payment slip.</span><button class="btn small primary" data-act="notifyon">Notify me</button></div>';
+  var ios = /iPhone|iPad|iPod/.test(navigator.userAgent), standalone = navigator.standalone || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  if (ios && !standalone && S.cfg.push) return '<div class="alert info"><span>To get a notification when someone pays: tap Share, then Add to Home Screen. Open Bei Cin Lah from your Home Screen and turn it on there.</span></div>';
+  return '';
+}
+function keyBytes(k) { var s = atob((k + '==='.slice((k.length + 3) % 4)).replace(/-/g, '+').replace(/_/g, '/')), a = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a; }
+async function notifyOn(b) {
+  try {
+    if ((await Notification.requestPermission()) !== 'granted') return toast('Notifications are blocked. Allow them in your phone settings for this site.');
+    var reg = await navigator.serviceWorker.ready, sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes((await api('GET', '/api/push/key')).key) });
+    setBill(await bapi('POST', '/push', { subscription: sub.toJSON() })); render();
+    toast('Done. This phone will ring when someone sends a slip.');
+  } catch (e) { toast(e.status ? e.message : 'Could not turn on notifications on this phone'); }
+}
+async function notifyOff(b) {
+  try {
+    var reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null, sub = reg && reg.pushManager ? await reg.pushManager.getSubscription() : null;
+    setBill(await bapi('DELETE', '/push', sub ? { endpoint: sub.endpoint } : { all: true })); render(); toast('Notifications turned off for this bill');
+  } catch (e) { toast(e.message || 'Could not turn off notifications'); }
+}
+
+/* ---------- checking payment slips ----------
+ * On the payer's phone, each new slip is read and its amount compared with what that person owes,
+ * so the payer can confirm without opening every slip. Done here, not on the friend's phone, so it cannot be faked there. */
+async function checkSlips(b) {
+  if (S.slipRun || !b || !myId(b) || !mem(b, myId(b)).isPayer) return;
+  var todo = b.members.filter(function (m) { var c = S.slipChecks[m.id]; return m.pay.status === 'sent' && m.hasSlip && (!c || c.slipAt !== m.pay.slipAt || c.expected !== m.pay.amount); });
+  if (!todo.length) return;
+  S.slipRun = true;
+  try {
+    for (var k = 0; k < todo.length; k++) {
+      var m = todo[k];
+      S.slipChecks[m.id] = { slipAt: m.pay.slipAt, expected: m.pay.amount, result: 'pending' }; render();
+      try {
+        var r = await fetch('/api/bills/' + b.id + '/img/slip/' + m.id, { headers: { 'x-token': tok(b.id) } });
+        if (!r.ok) throw new Error('slip');
+        var w = await ocrWorker();
+        await w.setParameters({ tessedit_pageseg_mode: '3' });
+        var c = window.ReceiptParse.checkSlip((await w.recognize(await r.blob())).data.text, m.pay.amount);
+        S.slipChecks[m.id] = { slipAt: m.pay.slipAt, expected: m.pay.amount, result: c.result, amount: c.amount };
+      } catch (e) { S.slipChecks[m.id] = { slipAt: m.pay.slipAt, expected: m.pay.amount, result: 'unread' }; }
+      render();
+    }
+  } finally { S.slipRun = false; }
+}
+function slipCheckHtml(m) {
+  var c = S.slipChecks[m.id];
+  if (!c || c.slipAt !== m.pay.slipAt) return '';
+  if (c.result === 'pending') return '<div class="small muted">Checking the slip…</div>';
+  if (c.result === 'match') return '<div class="small" style="color:var(--good);font-weight:700">✓ Slip shows ' + fmt(c.amount) + ', matches</div>';
+  if (c.result === 'mismatch') return '<div class="small" style="color:var(--warn);font-weight:700">Slip shows ' + fmt(c.amount) + ', expected ' + fmt(c.expected) + '. View the slip.</div>';
+  return '<div class="small muted">Could not read the amount. View the slip to check.</div>';
+}
+function matchingSlips(b) {
+  return b.members.filter(function (m) { var c = S.slipChecks[m.id]; return m.pay.status === 'sent' && c && c.result === 'match' && c.slipAt === m.pay.slipAt && c.expected === m.pay.amount; });
+}
+async function confirmMatching(b) {
+  var list = matchingSlips(b); if (!list.length) return;
+  for (var k = 0; k < list.length; k++) { try { setBill(await bapi('POST', '/pay', { memberId: list[k].id, action: 'confirm' })); } catch (e) { toast(e.message); break; } }
+  render(); toast(list.length + ' payment' + (list.length > 1 ? 's' : '') + ' confirmed');
+}
+
 async function doScan() {
   var d = S.draft; if (!d.scanFile || S.scanning) return;
   S.scanning = true; d.scanNote = ''; render();
@@ -525,6 +596,9 @@ document.addEventListener('click', function (e) {
         .then(function (bl) { S.modal = { title: 'Payment slip from ' + nm(b, uid), src: URL.createObjectURL(bl) }; paintModal(); }).catch(function () { toast('Could not load the slip'); });
     } break;
     case 'remind': showReminder([uid], 'Remind ' + nm(b, uid)); break;
+    case 'confirmmatching': if (b) confirmMatching(b); break;
+    case 'notifyon': if (b) notifyOn(b); break;
+    case 'notifyoff': if (b) notifyOff(b); break;
     case 'leave': if (b) {
       var bid = b.id, was = (mem(b, myId(b)) || {}).name;
       bapi('POST', '/leave').then(function (j) { delete S.store.bills[bid]; if (S.store.name === was) S.store.name = ''; saveStore(); S.acting = null; S.bill = j.bill; render(); window.scrollTo(0, 0); toast('Done. Pick your own name, or join with it.'); }).catch(function (x) { toast(x.message); });
@@ -608,6 +682,7 @@ setInterval(function () {
   refresh();
 }, 6000);
 
-api('GET', '/api/config').then(function (c) { S.cfg = c; if (S.view === 'new') render(); }).catch(function () {});
+api('GET', '/api/config').then(function (c) { S.cfg = c; if (S.view === 'new' || S.view === 'bill') render(); }).catch(function () {});
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function () {});
 route(false);
 })();

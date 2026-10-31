@@ -243,5 +243,31 @@
     return readings.filter(Boolean).reduce(function (a, b) { return !a || score(b) > score(a) ? b : a; }, null);
   }
 
-  return { parse: parse, rowsFromBlocks: rowsFromBlocks, best: best, balanced: balanced, goodEnough: goodEnough };
+  // Reads the amount paid off a bank or e-wallet slip (Maybank2u, CIMB, TNG, DuitNow...). Returns every
+  // plausible amount, best first: on an "amount" line, or written with RM / MYR; never a balance, fee or limit.
+  function slipAmounts(text) {
+    var found = [];
+    String(text || '').split(/\r?\n/).forEach(function (raw) {
+      var line = fixDigits(raw.replace(/\s+/g, ' ').trim());
+      if (!line || /balance|baki|fee|caj|limit|available|points|cashback|rebate/i.test(line)) return;
+      var labelled = /amount|amaun|jumlah|total|paid|transfer|pindahan|bayar|payment|sent/i.test(line);
+      var re = /(RM|MYR)?\s*-?\s*(\d{1,3}(?:,\d{3})+|\d{1,7})[.,](\d{2})(?!\d)/gi, m;
+      while ((m = re.exec(line))) {
+        var sen = Math.round(parseFloat(m[2].replace(/,/g, '') + '.' + m[3]) * 100);
+        if (!sen || (!labelled && !m[1])) continue;
+        found.push({ sen: sen, score: (labelled ? 2 : 0) + (m[1] ? 1 : 0) });
+      }
+    });
+    found.sort(function (a, b) { return b.score - a.score; });
+    var seen = {};
+    return found.filter(function (f) { return seen[f.sen] ? false : (seen[f.sen] = true); }).map(function (f) { return f.sen; });
+  }
+  // Does the slip show the amount owed? "match" (with the amount), "mismatch" (with what it shows instead) or "unread".
+  function checkSlip(text, expected) {
+    var all = slipAmounts(text);
+    if (all.some(function (a) { return Math.abs(a - expected) <= 1; })) return { result: 'match', amount: expected };
+    return all.length ? { result: 'mismatch', amount: all[0] } : { result: 'unread', amount: 0 };
+  }
+
+  return { parse: parse, rowsFromBlocks: rowsFromBlocks, best: best, balanced: balanced, goodEnough: goodEnough, slipAmounts: slipAmounts, checkSlip: checkSlip };
 });

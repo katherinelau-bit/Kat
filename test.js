@@ -261,10 +261,62 @@ AEE Er REL BR VT      ig`;
   assert.equal(best([null, split, joined]), joined);
   assert.ok(balanced(joined) && !balanced(split));
   console.log('passed: receipt text parsing');
+
+  // Payment slips: the amount sent, not the balance, fee or limit next to it.
+  const { slipAmounts, checkSlip } = require('./public/receipt-parse.js');
+  const maybank = `Maybank2u\nTransfer Successful\nDuitNow Transfer\nRecipient's Name KATHERINE LAU\nAmount RM 25.40\nService Charge RM 0.00\nReference ID 2026103112345\nAvailable Balance RM 1,234.56`;
+  assert.deepEqual(slipAmounts(maybank), [2540]);
+  assert.deepEqual(checkSlip(maybank, 2540), { result: 'match', amount: 2540 });
+  assert.deepEqual(checkSlip(maybank, 3000), { result: 'mismatch', amount: 2540 });
+  assert.deepEqual(checkSlip('CIMB Clicks\nTransfer to KATHERINE\nAmount\nMYR 1,025.00\nStatus: Successful', 102500).result, 'match');
+  assert.deepEqual(checkSlip('Touch n Go eWallet\nPayment successful\n-RM25.4O\nWallet balance RM 80.10', 2540).result, 'match', 'TNG with an O for a 0');
+  assert.deepEqual(checkSlip('Thank you\nRef 123456', 2540), { result: 'unread', amount: 0 });
+  console.log('passed: payment slip amounts');
+}
+
+// "Notify me when someone pays": only the payer subscribes, a slip notifies their phones, unsubscribed phones are dropped.
+async function pushNotifications() {
+  const sent = [];
+  const fake = { publicKey: async () => 'PUBKEY', send: async (sub, payload) => { sent.push({ to: sub.endpoint, payload }); return { gone: sub.endpoint.includes('/gone') }; } };
+  const handle = createApi({ store: createBlobStore(fakeBlobs()), push: fake });
+  const call = async (method, url, body, token) => {
+    const r = await handle(new Request('https://example.test' + url, { method, headers: { 'content-type': 'application/json', 'x-token': token || '' }, body: body ? JSON.stringify(body) : undefined }));
+    return { status: r.status, body: await r.json() };
+  };
+  const sub = (name) => ({ endpoint: 'https://push.example/' + name, keys: { p256dh: 'BKeyKeyKey', auth: 'authauth' } });
+  assert.deepEqual((await call('GET', '/api/push/key')).body, { key: 'PUBKEY' });
+  assert.equal((await call('GET', '/api/config')).body.push, true);
+  const c = (await call('POST', '/api/bills', { title: 'Thai Blessing', payerName: 'Katherine', items: [{ name: 'Rice', qty: 1, price: 2540 }] })).body;
+  const f = (await call('POST', `/api/bills/${c.id}/join`, { name: 'Victor' })).body;
+  await call('PUT', `/api/bills/${c.id}/picks`, { itemIds: ['i1'] }, f.token);
+  assert.equal((await call('POST', `/api/bills/${c.id}/push`, { subscription: sub('phone') }, f.token)).status, 403, 'only the payer');
+  assert.equal((await call('POST', `/api/bills/${c.id}/push`, { subscription: { endpoint: 'http://x' } }, c.token)).status, 400);
+  await call('POST', `/api/bills/${c.id}/push`, { subscription: sub('phone') }, c.token);
+  let r = await call('POST', `/api/bills/${c.id}/push`, { subscription: sub('gone') }, c.token);
+  assert.equal(r.body.bill.notify, true);
+  assert.equal(JSON.stringify(r.body).includes('push.example'), false, 'subscriptions stay on the server');
+  assert.equal((await call('GET', `/api/bills/${c.id}`, null, f.token)).body.bill.notify, false);
+  const JPG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(40, 1)]).toString('base64');
+  await call('POST', `/api/bills/${c.id}/slip`, { image: JPG }, f.token);
+  assert.deepEqual(sent.map((s) => s.to), ['https://push.example/phone', 'https://push.example/gone']);
+  assert.deepEqual(sent[0].payload, { title: 'Victor sent RM 25.40', body: 'Thai Blessing: tap to check the slip and confirm', url: '/b/' + c.id, tag: 'slip-' + c.id + '-' + f.memberId });
+  sent.length = 0;
+  await call('POST', `/api/bills/${c.id}/slip`, { image: JPG }, f.token);
+  assert.deepEqual(sent.map((s) => s.to), ['https://push.example/phone'], 'the unsubscribed phone was forgotten');
+  r = await call('DELETE', `/api/bills/${c.id}/push`, { endpoint: 'https://push.example/phone' }, c.token);
+  assert.equal(r.body.bill.notify, false);
+
+  // The real sender makes its keys once and keeps them in the store.
+  const { createPush } = require('./lib/push.js');
+  const kept = new Map(), st = { getImg: async (k) => kept.get(k) || null, putImg: async (k, v) => { kept.set(k, v); } };
+  const key1 = await createPush(st).publicKey(), key2 = await createPush(st).publicKey();
+  assert.ok(/^[A-Za-z0-9_-]{80,}$/.test(key1)); assert.equal(key1, key2);
+  console.log('passed: payment notifications');
 }
 
 (async () => {
   receiptParsing();
+  await pushNotifications();
   await new Promise((r) => server.listen(0, r));
   const base = 'http://localhost:' + server.address().port;
   const viaHttp = async (method, url, body, token) => {

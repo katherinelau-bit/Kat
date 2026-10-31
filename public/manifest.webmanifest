@@ -1,0 +1,14 @@
+{
+  "name": "Bei Cin Lah",
+  "short_name": "Bei Cin Lah",
+  "description": "Split restaurant bills with friends. Scan the receipt, pick your dishes, pay by DuitNow.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3f4f8",
+  "theme_color": "#d4206b",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
