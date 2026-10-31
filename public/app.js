@@ -303,11 +303,12 @@ function ocrWorker() {
 }
 async function readOnPhone(file) {
   var bmp = await createImageBitmap(file);
-  // Text reads best at roughly 1500-2000 px, in grey with extra contrast.
-  var s = Math.min(2, 1800 / Math.max(bmp.width, bmp.height));
+  // The photo goes in as taken, only shrunk if it is very large: Tesseract's own black-and-white step copes with
+  // coloured paper and shadows better than a grey or high-contrast version (tested on an orange receipt).
+  var s = Math.min(1, 2200 / Math.max(bmp.width, bmp.height));
   var c = document.createElement('canvas'); c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
   var x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
-  x.filter = 'grayscale(1) contrast(1.4)'; x.drawImage(bmp, 0, 0, c.width, c.height);
+  x.drawImage(bmp, 0, 0, c.width, c.height);
   var P = window.ReceiptParse, w = await ocrWorker(), r = null;
   // Layout mode 6 (one block of text) usually keeps an item and its price together; mode 4 (one column) is the second try.
   // Each pass is read twice, from the text as Tesseract lines it up and from word positions, and the reading that adds up best wins.
@@ -332,7 +333,8 @@ async function doScan() {
     if (r.merchant && !d.title) d.title = r.merchant;
     if (r.date) d.date = r.date;
     d.scanTotal = r.total;
-    d.scanNote = r.total && Math.abs(draftTotal(d) - r.total) > 1 ? 'Read ' + r.items.length + ' items, but the total differs from the receipt. Please check the amounts.' : 'Read ' + r.items.length + ' items. Please check them against the receipt.';
+    var gap = r.total ? r.total - draftTotal(d) : 0;
+    d.scanNote = Math.abs(gap) > 1 ? 'Read ' + r.items.length + ' items. They come to ' + fmt(draftTotal(d)) + ' but the receipt says ' + fmt(r.total) + ', so ' + fmt(Math.abs(gap)) + (gap > 0 ? ' is missing or misread' : ' too much was read') + '. Please check the items against the receipt.' : 'Read ' + r.items.length + ' items. Please check them against the receipt.';
   } catch (e) { d.scanNote = e.status === 429 ? 'Too many scans for now. Type the items instead.' : 'Could not read that receipt. Try a clearer, flatter photo, or type the items.'; }
   S.scanning = false; render();
 }

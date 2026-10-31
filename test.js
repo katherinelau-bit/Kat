@@ -135,6 +135,60 @@ VISA ****1234  21.20`);
   assert.deepEqual(parse('').items, []);
   assert.deepEqual(pick(parse('Kopi O Peng 3 280   8.40')), ['3|Kopi O Peng|840'], 'unit price that lost its decimal point');
 
+  // A real photo (orange thermal paper, curled, a finger over the corner), exactly as Tesseract read it:
+  // lost decimal points, clipped labels, menu codes, names over two lines, "(8.90/ea)" prices of one, add-on lines.
+  // The first dish's price was unreadable, so 13 of the 14 dishes are expected.
+  r = parse(String.raw`;          bh CSMRERESE TT         Price (MYR)
+| EO1 Thal Halnanese Chicken Rice.    FE        90
+(8.90/ea)
+® + Thigh + 1.00
+X04 CHARCOAL GRILLED CHARSIU                10.00
+(100g (small) (10.00/ea)
+|    1     E09 Shunde-Style Steamed Pork Ribs             1590
+|      Rice (15.90/ea)
+P72 E01 Thal Halnanese Chicken Rice             17 80
+(8.90/ea)
+2     F01 Fried Basll Minced Pork Rice (-)                33.80
+(16.90/ea)
+1     WO2 Ice Thal Green Milk Tea (7.90/                 7.90
+ea)
+2 WO1 Ice Classic Thal Milk Tea (7.90/             15.80
+ea)
+1 Z03Bralsed Tofu (4 90/ea)                            490
+|    1 W04 Ice Honey Lemon Juice (7.90/                7 90
+ea)
+rE            W07 Ice Chrysanthemum Flower                        790
+Ellice (7.90/ea)
+pd M02 THAI HAINANESE CHICKEN               30.00
+EE                 alf) (Takeaway) (30.00/ea)
+4                TA
+                 01 Fried Basll Minced Pork Rice (-)                16 90
+i                       fakeaway) (16.90/ea)
+TA
+13 Thal Crispy Pork Rice (Takeaway)               10:90
+0.90/ea)
+TA                                               )
+D06 Chicken Rice (Takeaway) (2.00/              2.00
+)
+TA
+total                                 191 60
+ST (6%)                                11.50
+RVICE CHARGE (10%)                              1318
+rounding                                             0.02
+al (MYR)                            216.30
+ve                                          216.30 |
+nge                                         0.00
+“NEE                                    en
+imma YS            Base Amt.    Amount
+a NR
+fil bedi Bi Gis Sh a 131.80     13.18  |
+AEE Er REL BR VT      ig`);
+  assert.deepEqual(pick(r), ['1|CHARCOAL GRILLED CHARSIU|1000', '1|Shunde-Style Steamed Pork Ribs Rice|1590', '2|Thal Halnanese Chicken Rice|1780',
+    '2|Fried Basll Minced Pork Rice|3380', '1|Ice Thal Green Milk Tea|790', '2|Ice Classic Thal Milk Tea|1580', '1|Bralsed Tofu|490',
+    '1|Ice Honey Lemon Juice|790', '1|Ice Chrysanthemum Flower Ellice|790', '1|THAI HAINANESE CHICKEN|3000', '1|Fried Basll Minced Pork Rice|1690',
+    '1|Thal Crispy Pork Rice (Takeaway)|1090', '1|Chicken Rice (Takeaway)|200']);
+  assert.deepEqual([r.service, r.sst, r.rounding, r.total, r.merchant], [1318, 1150, 2, 21630, '']);
+
   // A photo tilted 3 degrees where the reader split the price column into separate lines:
   // rebuilding rows from word positions puts each price back next to its item.
   const { rowsFromBlocks, best, balanced } = require('./public/receipt-parse.js');
