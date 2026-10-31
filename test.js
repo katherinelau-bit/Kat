@@ -72,6 +72,24 @@ async function suite(name, call) {
   assert.equal((await call('DELETE', `/api/bills/${id}/members/${payer}`, null, owner)).status, 400);
   assert.equal((await call('DELETE', `/api/bills/${id}/members/${priya}`, null, owner)).status, 200);
 
+  // The payer edits the bill: rename and reprice a dish, drop one, add one. Ticks stay on kept dishes,
+  // the dropped dish leaves Wei Jie's picks, and his unconfirmed slip follows his new share.
+  r = await call('GET', '/api/bills/' + id, null, owner);
+  const edit = r.body.bill.items.filter((i) => i.id !== 'i3').map((i) => (i.id === 'i2' ? { ...i, name: 'Mee goreng mamak', price: 1000 } : i));
+  edit.push({ name: 'Keropok', qty: 1, price: 500 });
+  const editBody = { title: 'Test dinner (fixed)', date: '2026-10-30', items: edit, service: 505, sst: 333, rounding: 2 };
+  assert.equal((await call('PUT', '/api/bills/' + id, editBody, wj.token)).status, 403, 'only the payer edits');
+  assert.equal((await call('PUT', '/api/bills/' + id, { ...editBody, items: [] }, owner)).status, 400);
+  r = await call('PUT', '/api/bills/' + id, editBody, owner);
+  assert.equal(r.status, 200);
+  const eb = r.body.bill;
+  assert.deepEqual(eb.items.map((i) => i.id + ':' + i.name + ':' + i.price), ['i1:Nasi lemak:1350', 'i2:Mee goreng mamak:1000', 'i4:Teh tarik:840', 'i5:Ais kopi:320', 'i6:Maggi goreng:850', 'i7:Sirap bandung:350', 'i8:Keropok:500']);
+  assert.deepEqual([eb.title, eb.date, typeof eb.editedAt], ['Test dinner (fixed)', '2026-10-30', 'number']);
+  const wjNow = eb.members.find((x) => x.id === wj.memberId);
+  assert.deepEqual(wjNow.picks, ['i2', 'i5']);
+  assert.equal(wjNow.pay.status, 'sent');
+  assert.equal(wjNow.pay.amount, Split.calc(eb).per[wj.memberId].total);
+
   assert.equal((await call('DELETE', '/api/bills/' + id, null, wj.token)).status, 403);
   assert.equal((await call('DELETE', '/api/bills/' + id, null, owner)).status, 200);
   assert.equal((await call('GET', '/api/bills/' + id)).status, 404);

@@ -67,6 +67,12 @@ Claude scans are limited to 15 per hour per visitor to protect your bill. Scans 
   "Copy my payer link" on the bill to keep a private link that restores control on another phone. Anyone with
   the normal bill link can join and pick dishes. Payment slips are visible only to the payer and the person
   who uploaded them. The QR and receipt photo are visible to anyone with the bill link.
+- **Saving and editing.** A new bill being filled in is kept on that phone as you go, so a refresh or a closed
+  tab does not lose it; the home page offers to continue or discard it. After creating a bill, the payer can tap
+  "Edit items" to change the name, date, dishes or charges. Ticks stay on the dishes that are kept, a removed
+  dish comes off whoever ticked it, and payments already confirmed keep their amount.
+- **Summary picture.** "Share summary" on a bill makes a picture of who ate what, how much each person owes and
+  who has paid, to share in the group chat (phones) or save (computers).
 - **Reminders.** "Remind" and "Remind everyone" write a ready message to send on WhatsApp, and people who open
   the bill see a banner if they still owe. Automatic WhatsApp or phone push messages are not built yet. They
   would need a messaging service added to the server.

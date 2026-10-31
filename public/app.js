@@ -60,6 +60,7 @@ function paintModal() {
   var d = document.createElement('div'); d.className = 'modal'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-modal', 'true'); d.setAttribute('data-act', 'closemodal');
   d.innerHTML = '<div class="box"><div class="row between"><b>' + esc(m.title) + '</b><button class="btn small" data-act="closemodal">Close</button></div>' +
     (m.src ? '<img src="' + esc(m.src) + '" alt="' + esc(m.title) + '">' : '') +
+    (m.acts ? '<div class="row" style="flex-wrap:wrap">' + m.acts + '</div>' : '') +
     (m.text != null ? '<textarea id="mtext" readonly>' + esc(m.text) + '</textarea>' + (m.wa ? '<a class="btn primary" href="' + esc(m.wa) + '" target="_blank" rel="noopener" style="text-align:center;text-decoration:none">Open WhatsApp</a>' : '') + '<button class="btn" data-act="copymodal">Copy message</button>' : '') + '</div>';
   o.insertBefore(d, o.firstChild);
 }
@@ -75,7 +76,8 @@ async function route(scroll) {
   var p = location.pathname, m;
   if (scroll) window.scrollTo(0, 0);
   S.acting = null; S.err = '';
-  if (p === '/new') { S.view = 'new'; if (!S.draft) S.draft = newDraft(); render(); return; }
+  if (p === '/new') { S.view = 'new'; if (!S.draft || S.draft.editId) S.draft = loadDraft() || newDraft(); render(); return; }
+  if ((m = p.match(/^\/b\/([a-z0-9]+)\/edit$/))) { S.view = 'new'; S.billId = m[1]; S.draft = null; render(); await startEdit(m[1]); return; }
   if ((m = p.match(/^\/b\/([a-z0-9]+)$/))) { S.view = 'bill'; S.billId = m[1]; S.bill = null; render(); await loadBill(m[1]); return; }
   S.view = 'home'; await loadHome();
 }
@@ -108,8 +110,35 @@ async function loadHome() {
   S.homeLoaded = true; render();
 }
 
-/* ---------- drafts (new bill) ---------- */
+/* ---------- drafts (new bill, or editing one) ---------- */
 function newDraft() { return { title: '', date: new Date().toISOString().slice(0, 10), payerName: S.store.name || '', items: [{ name: '', qty: '1', price: '' }], service: '', sst: '', rounding: '', qr: '', receipt: '', scanFile: null, scanTotal: 0, scanNote: '' }; }
+// An unfinished new bill is kept on this phone, so a refresh or a closed tab does not lose a scanned receipt.
+var DRAFT_KEY = 'bcl.draft.v1', DRAFT_FIELDS = ['title', 'date', 'payerName', 'items', 'service', 'sst', 'rounding', 'qr', 'receipt', 'scanTotal', 'scanNote'], draftT = null;
+function saveDraft() {
+  var d = S.draft; if (!d || d.editId) return;
+  clearTimeout(draftT);
+  draftT = setTimeout(function () {
+    var o = {}; DRAFT_FIELDS.forEach(function (k) { o[k] = d[k]; });
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(o)); } catch (e) {}
+  }, 300);
+}
+function loadDraft() {
+  try { var o = JSON.parse(localStorage.getItem(DRAFT_KEY)); if (o && Array.isArray(o.items) && o.items.length) return Object.assign(newDraft(), o); } catch (e) {}
+  return null;
+}
+function clearDraft() { clearTimeout(draftT); try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} }
+function draftStarted(d) { return !!(d && (d.title || d.receipt || d.items.some(function (i) { return i.name || i.price; }))); }
+// Editing an existing bill uses the same form, filled from the bill. Item ids are kept so people's ticks stay.
+async function startEdit(id) {
+  try {
+    var b = (await api('GET', '/api/bills/' + id, null, tok(id))).bill, me = myId(b);
+    if (!me || !mem(b, me).isPayer) { toast('Only the person who paid can edit this bill'); nav('/b/' + id); return; }
+    S.draft = { editId: id, title: b.title, date: b.date, payerName: nm(b, b.payerId), service: b.service ? fixed(b.service) : '', sst: b.sst ? fixed(b.sst) : '', rounding: b.rounding ? fixed(b.rounding) : '',
+      items: b.items.map(function (i) { return { id: i.id, name: i.name, qty: String(i.qty), price: fixed(Math.round(i.price / i.qty)), line: i.price }; }),
+      paidCount: b.members.filter(function (m) { return !m.isPayer && m.pay.status === 'paid'; }).length, qr: '', receipt: '', scanFile: null, scanTotal: 0, scanNote: '' };
+  } catch (e) { toast(e.status === 404 ? 'This bill was not found' : 'Could not open this bill'); nav('/'); return; }
+  render();
+}
 function lineCents(i) { var q = Math.max(1, parseInt(i.qty, 10) || 1); return i.line != null ? i.line : toC(i.price) * q; }
 function draftSum(d) { var s = 0; d.items.forEach(function (i) { s += lineCents(i); }); return s; }
 function draftTotal(d) { return draftSum(d) + toC(d.service) + toC(d.sst) + toC(d.rounding); }
@@ -149,6 +178,11 @@ function viewHome() {
     if (me.isPayer) b.members.forEach(function (m) { if (!m.isPayer && m.pay.status !== 'paid') owed += owedBy(m, c); });
     else if (c.per[id] && me.pay.status !== 'paid') owe += owedBy(me, c);
   });
+  var ud = loadDraft();
+  if (draftStarted(ud)) {
+    var n = ud.items.filter(function (i) { return lineCents(i) > 0; }).length;
+    h += '<div class="alert info"><span>You have an unfinished bill' + (ud.title ? ': <b>' + esc(ud.title) + '</b>' : '') + (n ? ' (' + n + ' item' + (n > 1 ? 's' : '') + ', ' + fmt(draftTotal(ud)) + ')' : '') + '.</span><span class="row" style="gap:6px"><button class="btn small primary" data-nav="/new">Continue</button><button class="btn small" data-act="discarddraft">Discard</button></span></div>';
+  }
   h += alertsFor(S.home);
   h += '<div class="tiles"><div class="tile"><div class="k">You owe</div><div class="v">' + fmt(owe) + '</div></div><div class="tile"><div class="k">Owed to you</div><div class="v">' + fmt(owed) + '</div></div></div>';
   h += '<div class="row between"><h2>Your bills</h2><button class="btn primary" data-nav="/new">New bill</button></div>';
@@ -243,7 +277,7 @@ function viewBill() {
     h += '<div class="person">' + av(b, m.id) + '<div class="grow"><div><b>' + esc(m.name) + (m.id === meId ? ' (you)' : '') + '</b></div><div class="small muted mono">' + (s ? fmt(owedBy(m, c)) : 'No items yet') + (m.remind && st === 'unpaid' && !m.isPayer ? ' · reminded ' + m.remind.count + '×, last ' + ago(m.remind.at) : '') + '</div></div>' + statusPill(m, c, m.isPayer) + (acts ? '<div class="acts" style="width:100%;padding-left:38px">' + acts + '</div>' : '') + '</div>';
   });
   h += '</div></div>';
-  if (isPayer) h += '<div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="copyadmin">Copy my payer link (keep private)</button><button class="btn small" data-act="delete" style="color:var(--bad)">Delete bill</button></div>';
+  h += '<div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="summary">Share summary</button>' + (isPayer ? '<button class="btn small" data-nav="/b/' + b.id + '/edit">Edit items</button><button class="btn small" data-act="copyadmin">Copy my payer link (keep private)</button><button class="btn small" data-act="delete" style="color:var(--bad)">Delete bill</button>' : '') + '</div>';
   return h;
 }
 function totalsHtml(d) {
@@ -253,21 +287,26 @@ function totalsHtml(d) {
 }
 function viewNew() {
   var d = S.draft;
-  var h = topbar() + '<button class="btn ghost" data-nav="/">← Your bills</button><h2>New bill</h2>';
-  h += '<div class="card"><h3>1. Receipt</h3><div class="drop"><div class="row">' + (d.receipt ? '<img class="thumb" src="' + d.receipt + '" alt="Receipt photo">' : '') + '<div><b>' + (d.receipt ? 'Receipt attached' : 'Add a photo of the receipt') + '</b><div class="small muted">' + 'The items, service charge and SST are read for you. Check them before you create the bill. Friends can view the photo.' + '</div></div></div><div class="row"><button class="btn" data-act="pickreceipt">' + (d.receipt ? 'Change photo' : 'Choose photo') + '</button>' + (d.scanFile ? '<button class="btn primary" data-act="scan"' + (S.scanning ? ' disabled' : '') + '>' + (S.scanning ? 'Reading…' : 'Read receipt') + '</button>' : '') + '</div></div>' +
+  if (!d) return topbar() + '<div class="card empty"><h3>Opening bill…</h3></div>';
+  var ed = d.editId, back = ed ? '/b/' + ed : '/';
+  var h = topbar() + '<button class="btn ghost" data-nav="' + back + '">' + (ed ? '← Back to the bill' : '← Your bills') + '</button><h2>' + (ed ? 'Edit bill' : 'New bill') + '</h2>';
+  if (ed) h += '<div class="alert info"><span>Ticks stay on the dishes you keep. A dish you remove comes off whoever ticked it.' + (d.paidCount ? ' ' + d.paidCount + (d.paidCount > 1 ? ' people have' : ' person has') + ' already paid; their confirmed amount stays the same.' : '') + '</span></div>';
+  else if (draftStarted(d)) h += '<p class="small muted">Saved on this phone as you go. <button class="btn small" data-act="discarddraft">Start over</button></p>';
+  if (!ed) h += '<div class="card"><h3>1. Receipt</h3><div class="drop"><div class="row">' + (d.receipt ? '<img class="thumb" src="' + d.receipt + '" alt="Receipt photo">' : '') + '<div><b>' + (d.receipt ? 'Receipt attached' : 'Add a photo of the receipt') + '</b><div class="small muted">' + 'The items, service charge and SST are read for you. Check them before you create the bill. Friends can view the photo.' + '</div></div></div><div class="row"><button class="btn" data-act="pickreceipt">' + (d.receipt ? 'Change photo' : 'Choose photo') + '</button>' + (d.scanFile ? '<button class="btn primary" data-act="scan"' + (S.scanning ? ' disabled' : '') + '>' + (S.scanning ? 'Reading…' : 'Read receipt') + '</button>' : '') + '</div></div>' +
     (d.scanNote ? '<p class="small" style="color:var(--warn)">' + esc(d.scanNote) + '</p>' : '') + '</div>';
-  h += '<div class="card"><h3>2. Items</h3><div class="two"><div class="field"><label for="f-title">Bill name</label><input type="text" id="f-title" data-f="title" maxlength="80" value="' + esc(d.title) + '" placeholder="e.g. Thai dinner"></div><div class="field"><label for="f-date">Date</label><input type="date" id="f-date" data-f="date" value="' + esc(d.date) + '"></div><div class="field"><label for="f-payer">Your name (you paid)</label><input type="text" id="f-payer" data-f="payerName" maxlength="40" value="' + esc(d.payerName) + '" placeholder="e.g. Katherine"></div></div>';
+  h += '<div class="card"><h3>' + (ed ? 'Items' : '2. Items') + '</h3><div class="two"><div class="field"><label for="f-title">Bill name</label><input type="text" id="f-title" data-f="title" maxlength="80" value="' + esc(d.title) + '" placeholder="e.g. Thai dinner"></div><div class="field"><label for="f-date">Date</label><input type="date" id="f-date" data-f="date" value="' + esc(d.date) + '"></div><div class="field"><label for="f-payer">Your name (you paid)</label><input type="text" id="f-payer" data-f="payerName" maxlength="40"' + (ed ? ' disabled' : '') + ' value="' + esc(d.payerName) + '" placeholder="e.g. Katherine"></div></div>';
   h += '<div class="items"><div class="irow h"><span>Item</span><span>Qty</span><span>Each (RM)</span><span style="text-align:right">Total</span><span></span></div>';
   d.items.forEach(function (it, i) { h += '<div class="irow"><input type="text" aria-label="Item name" data-i="' + i + '" data-k="name" value="' + esc(it.name) + '" placeholder="Item"><input type="number" min="1" aria-label="Quantity" data-i="' + i + '" data-k="qty" value="' + esc(it.qty) + '"><input type="number" step="0.01" min="0" inputmode="decimal" aria-label="Price of one" data-i="' + i + '" data-k="price" value="' + esc(it.price) + '" placeholder="0.00"><span class="mono small" data-line="' + i + '">' + fmt(lineCents(it)) + '</span><button class="x" data-act="rmitem" data-i="' + i + '" aria-label="Remove item">×</button></div>'; });
   h += '</div><div><button class="btn small" data-act="additem">Add item</button></div><p class="small muted">Enter the price of one. The bill multiplies it by the quantity, so picking a dish with quantity 2 gives you both.</p></div>';
-  h += '<div class="card"><h3>3. Charges</h3><div class="two"><div class="field"><label for="f-svc">Service charge (RM)</label><input type="number" step="0.01" id="f-svc" data-f="service" value="' + esc(d.service) + '" placeholder="0.00"></div><div class="field"><label for="f-sst">SST (RM)</label><input type="number" step="0.01" id="f-sst" data-f="sst" value="' + esc(d.sst) + '" placeholder="0.00"></div><div class="field"><label for="f-rnd">Rounding (RM)</label><input type="number" step="0.01" id="f-rnd" data-f="rounding" value="' + esc(d.rounding) + '" placeholder="0.00"></div></div><div class="chips"><button class="btn small" data-act="svc10">Service 10%</button><button class="btn small" data-act="sst6">SST 6%</button><button class="btn small" data-act="sst8">SST 8%</button></div><p class="small muted">The quick buttons work out the amount from your items. SST is applied after service charge. Match them to what the receipt prints.</p><div class="receipt"><div class="chg tot" id="draftTotals">' + totalsHtml(d) + '</div></div></div>';
-  h += '<div class="card"><h3>4. Your DuitNow QR</h3><div class="drop"><div class="row">' + (d.qr ? '<img class="thumb" src="' + d.qr + '" alt="Your DuitNow QR" style="background:#fff">' : '') + '<div><b>' + (d.qr ? 'QR attached' : 'Add your DuitNow QR picture') + '</b><div class="small muted">Friends scan it to pay you the exact amount.</div></div></div><button class="btn" data-act="pickqr">' + (d.qr ? 'Change' : 'Choose picture') + '</button></div></div>';
-  h += '<div class="row"><button class="btn primary" data-act="create"' + (S.creating ? ' disabled' : '') + '>' + (S.creating ? 'Creating…' : 'Create bill') + '</button><button class="btn" data-nav="/">Cancel</button></div>';
+  h += '<div class="card"><h3>' + (ed ? 'Charges' : '3. Charges') + '</h3><div class="two"><div class="field"><label for="f-svc">Service charge (RM)</label><input type="number" step="0.01" id="f-svc" data-f="service" value="' + esc(d.service) + '" placeholder="0.00"></div><div class="field"><label for="f-sst">SST (RM)</label><input type="number" step="0.01" id="f-sst" data-f="sst" value="' + esc(d.sst) + '" placeholder="0.00"></div><div class="field"><label for="f-rnd">Rounding (RM)</label><input type="number" step="0.01" id="f-rnd" data-f="rounding" value="' + esc(d.rounding) + '" placeholder="0.00"></div></div><div class="chips"><button class="btn small" data-act="svc10">Service 10%</button><button class="btn small" data-act="sst6">SST 6%</button><button class="btn small" data-act="sst8">SST 8%</button></div><p class="small muted">The quick buttons work out the amount from your items. SST is applied after service charge. Match them to what the receipt prints.</p><div class="receipt"><div class="chg tot" id="draftTotals">' + totalsHtml(d) + '</div></div></div>';
+  if (!ed) h += '<div class="card"><h3>4. Your DuitNow QR</h3><div class="drop"><div class="row">' + (d.qr ? '<img class="thumb" src="' + d.qr + '" alt="Your DuitNow QR" style="background:#fff">' : '') + '<div><b>' + (d.qr ? 'QR attached' : 'Add your DuitNow QR picture') + '</b><div class="small muted">Friends scan it to pay you the exact amount.</div></div></div><button class="btn" data-act="pickqr">' + (d.qr ? 'Change' : 'Choose picture') + '</button></div></div>';
+  h += '<div class="row"><button class="btn primary" data-act="create"' + (S.creating ? ' disabled' : '') + '>' + (S.creating ? (ed ? 'Saving…' : 'Creating…') : (ed ? 'Save changes' : 'Create bill')) + '</button><button class="btn" data-nav="' + back + '">Cancel</button></div>';
   return h;
 }
 function render() {
   var a = $('#app'); if (!a) return;
   a.innerHTML = S.view === 'new' ? viewNew() : S.view === 'bill' ? viewBill() : viewHome();
+  if (S.view === 'new') saveDraft();
 }
 
 /* ---------- actions ---------- */
@@ -285,6 +324,85 @@ function showReminder(uids, title) {
   S.modal = { title: title, text: t, wa: 'https://wa.me/?text=' + encodeURIComponent(t) }; paintModal();
   bapi('POST', '/remind', { memberIds: uids }).then(function (j) { setBill(j); if (!S.modal) render(); }).catch(function () {});
 }
+/* ---------- summary picture ----------
+ * A picture of who ate what and who has paid, to post in the group chat or keep. Always drawn light, since it is shared. */
+var SUM = { bg: '#f3f4f8', card: '#ffffff', ink: '#161a2b', muted: '#5d6479', line: '#dfe2ec', accent: '#d4206b', good: '#14804a', warn: '#8f5200',
+  display: '"Bricolage Grotesque","Trebuchet MS",system-ui,sans-serif', body: '"Figtree",system-ui,-apple-system,"Segoe UI",sans-serif', mono: '"IBM Plex Mono",ui-monospace,Menlo,monospace' };
+function wrapText(x, text, width) {
+  var words = String(text).split(' '), lines = [], cur = '';
+  words.forEach(function (w) { var t = cur ? cur + ' ' + w : w; if (x.measureText(t).width > width && cur) { lines.push(cur); cur = w; } else cur = t; });
+  if (cur) lines.push(cur);
+  return lines;
+}
+// Lays the picture out twice: once to measure its height, once to draw.
+function summaryCanvas(b) {
+  var c = Split.calc(b), W = 1080, P = 56, inner = W - 2 * P - 64, cv = document.createElement('canvas'), x = cv.getContext('2d');
+  var rows = b.members.filter(function (m) { return c.per[m.id]; }).map(function (m) {
+    var s = c.per[m.id], st = m.isPayer ? 'Paid the bill' : m.pay.status === 'paid' ? 'Paid' : m.pay.status === 'sent' ? 'Slip sent' : 'To pay';
+    return { name: m.name, status: st, amount: s ? owedBy(m, c) : 0, dishes: s ? s.lines.map(function (l) { return l.name + (l.n > 1 ? ' (÷' + l.n + ')' : ''); }).join(', ') : 'Nothing picked',
+      color: m.isPayer ? SUM.muted : st === 'Paid' ? SUM.good : st === 'Slip sent' ? SUM.warn : SUM.accent };
+  });
+  if (c.unclaimed.sub > 0) rows.push({ name: 'Not picked yet', status: 'With ' + nm(b, b.payerId), amount: c.unclaimed.total, dishes: c.unclaimed.items.map(function (i) { return i.name; }).join(', '), color: SUM.muted });
+  function lay(draw) {
+    var y = P;
+    if (draw) { x.fillStyle = SUM.bg; x.fillRect(0, 0, W, cv.height); }
+    // Header
+    x.font = '700 30px ' + SUM.display; if (draw) { x.fillStyle = SUM.accent; x.fillText('Bei Cin Lah', P, y + 30); }
+    y += 56;
+    x.font = '800 52px ' + SUM.display;
+    var tl = wrapText(x, b.title, W - 2 * P);
+    tl.forEach(function (l) { if (draw) { x.fillStyle = SUM.ink; x.fillText(l, P, y + 50); } y += 62; });
+    x.font = '400 28px ' + SUM.body; if (draw) { x.fillStyle = SUM.muted; x.fillText((b.date ? b.date + ' · ' : '') + 'paid by ' + nm(b, b.payerId), P, y + 30); }
+    y += 52;
+    x.font = '600 40px ' + SUM.mono; if (draw) { x.fillStyle = SUM.ink; x.fillText('Total ' + fmt(c.total), P, y + 40); }
+    y += 76;
+    // One card per person
+    rows.forEach(function (r) {
+      x.font = '400 26px ' + SUM.body; var dl = wrapText(x, r.dishes, inner);
+      var h = 32 + 40 + dl.length * 34 + 28;
+      if (draw) {
+        x.fillStyle = SUM.card; x.fillRect(P, y, W - 2 * P, h); x.fillStyle = r.color; x.fillRect(P, y, 8, h);
+        x.font = '700 32px ' + SUM.body; x.fillStyle = SUM.ink; x.textAlign = 'left'; x.fillText(r.name, P + 32, y + 32 + 30);
+        x.font = '600 32px ' + SUM.mono; x.textAlign = 'right'; x.fillText(fmt(r.amount), W - P - 32, y + 32 + 30);
+        x.font = '600 24px ' + SUM.body; x.fillStyle = r.color; x.fillText(r.status, W - P - 32, y + 32 + 64);
+        x.textAlign = 'left'; x.font = '400 26px ' + SUM.body; x.fillStyle = SUM.muted;
+        dl.forEach(function (l, i) { x.fillText(l, P + 32, y + 32 + 40 + 28 + i * 34); });
+      }
+      y += h + 16;
+    });
+    // Footer with the bill link
+    y += 16;
+    x.font = '400 26px ' + SUM.body; if (draw) { x.fillStyle = SUM.muted; x.fillText('Pick your dishes and pay at', P, y + 26); }
+    y += 40;
+    x.font = '600 28px ' + SUM.mono; if (draw) { x.fillStyle = SUM.accent; x.fillText(shareUrl(b), P, y + 28); }
+    return y + 28 + P;
+  }
+  cv.width = W; cv.height = Math.ceil(lay(false)); lay(true);
+  return cv;
+}
+async function showSummary(b) {
+  try { if (document.fonts && document.fonts.ready) await document.fonts.ready; } catch (e) {}
+  var blob = await new Promise(function (ok) { summaryCanvas(b).toBlob(ok, 'image/png'); });
+  if (!blob) return toast('Could not make the picture');
+  var name = (b.title.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'bill') + '-summary.png';
+  S.modal = { title: 'Bill summary', src: URL.createObjectURL(blob), blob: blob, file: name, text: undefined,
+    acts: (navigator.canShare ? '<button class="btn primary" data-act="sharesum">Share</button>' : '') + '<button class="btn" data-act="savesum">Save picture</button>' };
+  paintModal();
+}
+async function shareSummary() {
+  var m = S.modal; if (!m || !m.blob) return;
+  var f = new File([m.blob], m.file, { type: 'image/png' });
+  if (navigator.canShare && navigator.canShare({ files: [f] })) {
+    try { await navigator.share({ files: [f], title: S.bill ? S.bill.title : 'Bill summary' }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  saveSummary();
+}
+function saveSummary() {
+  var m = S.modal; if (!m || !m.blob) return;
+  var a = document.createElement('a'); a.href = m.src; a.download = m.file; document.body.appendChild(a); a.click(); a.remove();
+  toast('Picture saved');
+}
+
 /* ---------- receipt reading ----------
  * Free and on the phone with Tesseract.js (served from /ocr, loaded on first use, language file cached by the browser).
  * If the server's Claude reader is switched on it is tried first, and the phone takes over if it fails. */
@@ -346,13 +464,20 @@ async function createBill() {
   var d = S.draft; if (S.creating) return;
   if (!d.title.trim()) return toast('Give the bill a name');
   if (!d.payerName.trim()) return toast('Enter your name');
-  var items = d.items.filter(function (i) { return lineCents(i) > 0; }).map(function (i) { return { name: i.name, qty: Math.max(1, parseInt(i.qty, 10) || 1), price: lineCents(i) }; });
+  var items = d.items.filter(function (i) { return lineCents(i) > 0; }).map(function (i) { return { id: i.id, name: i.name, qty: Math.max(1, parseInt(i.qty, 10) || 1), price: lineCents(i) }; });
   if (!items.length) return toast('Add at least one item with an amount');
   S.creating = true; render();
+  if (d.editId) {
+    try {
+      var j = await api('PUT', '/api/bills/' + d.editId, { title: d.title, date: d.date, items: items, service: toC(d.service), sst: toC(d.sst), rounding: toC(d.rounding) }, tok(d.editId));
+      var eid = d.editId; S.draft = null; S.creating = false; S.bill = j.bill; toast('Bill updated'); nav('/b/' + eid);
+    } catch (e) { S.creating = false; toast(e.message); render(); }
+    return;
+  }
   try {
     var r = await api('POST', '/api/bills', { title: d.title, date: d.date, payerName: d.payerName, items: items, service: toC(d.service), sst: toC(d.sst), rounding: toC(d.rounding), qr: b64(d.qr), receipt: b64(d.receipt) });
     S.store.bills[r.id] = { token: r.token, memberId: r.memberId, title: d.title }; S.store.name = d.payerName.trim(); saveStore();
-    S.draft = null; S.creating = false; toast('Bill created. Send the link to your friends.'); nav('/b/' + r.id);
+    S.draft = null; clearDraft(); S.creating = false; toast('Bill created. Send the link to your friends.'); nav('/b/' + r.id);
   } catch (e) { S.creating = false; toast(e.message); render(); }
 }
 function joinBill(body) {
@@ -415,6 +540,10 @@ document.addEventListener('click', function (e) {
     case 'svc10': d.service = fixed(Math.round(draftSum(d) * 0.10)); render(); break;
     case 'sst6': case 'sst8': d.sst = fixed(Math.round((draftSum(d) + toC(d.service)) * (act === 'sst6' ? 0.06 : 0.08))); render(); break;
     case 'create': createBill(); break;
+    case 'discarddraft': clearDraft(); S.draft = S.view === 'new' ? newDraft() : null; render(); toast('Unfinished bill cleared'); break;
+    case 'summary': if (b) showSummary(b); break;
+    case 'sharesum': shareSummary(); break;
+    case 'savesum': saveSummary(); break;
   }
 });
 document.addEventListener('input', function (e) {
@@ -426,6 +555,7 @@ document.addEventListener('input', function (e) {
     var ce = document.querySelector('[data-line="' + ix + '"]'); if (ce) ce.textContent = fmt(lineCents(it));
   } else return;
   var el = $('#draftTotals'); if (el) el.innerHTML = totalsHtml(d);
+  saveDraft();
 });
 document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape' && S.modal) closeModal();
