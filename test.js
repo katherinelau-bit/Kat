@@ -67,8 +67,22 @@ async function suite(name, call) {
   r = await call('POST', '/api/bills/' + id + '/remind', { memberIds: [priya] }, owner);
   assert.equal(r.body.bill.members.find((m) => m.id === priya).remind.count, 1);
   r = await call('POST', '/api/bills/' + id + '/members', { name: 'Hafiz' }, owner); const haf = r.body.memberId;
-  assert.equal((await call('POST', '/api/bills/' + id + '/join', { memberId: haf })).status, 200);
+  const claim1 = await call('POST', '/api/bills/' + id + '/join', { memberId: haf });
+  assert.equal(claim1.status, 200);
   assert.equal((await call('POST', '/api/bills/' + id + '/join', { memberId: haf })).status, 409, 'cannot claim twice');
+  // Someone claimed Hafiz by mistake: "Not you? Switch person" releases the name, and the old login stops working.
+  assert.equal((await call('POST', '/api/bills/' + id + '/leave', null, claim1.body.token)).status, 200);
+  assert.equal((await call('POST', '/api/bills/' + id + '/auth', null, claim1.body.token)).status, 401);
+  assert.equal((await call('POST', '/api/bills/' + id + '/leave', null, owner)).status, 400, 'the payer cannot leave');
+  // Claimed by the wrong person again: the payer resets the name; friends cannot.
+  const claim2 = await call('POST', '/api/bills/' + id + '/join', { memberId: haf });
+  assert.equal(claim2.status, 200);
+  assert.equal((await call('POST', `/api/bills/${id}/members/${haf}/reset`, null, wj.token)).status, 403);
+  assert.equal((await call('POST', `/api/bills/${id}/members/${payer}/reset`, null, owner)).status, 400);
+  r = await call('POST', `/api/bills/${id}/members/${haf}/reset`, null, owner);
+  assert.equal(r.body.bill.members.find((x) => x.id === haf).claimed, false);
+  assert.equal((await call('POST', '/api/bills/' + id + '/auth', null, claim2.body.token)).status, 401);
+  assert.equal((await call('POST', '/api/bills/' + id + '/join', { memberId: haf })).status, 200, 'the real Hafiz can claim again');
   assert.equal((await call('DELETE', `/api/bills/${id}/members/${payer}`, null, owner)).status, 400);
   assert.equal((await call('DELETE', `/api/bills/${id}/members/${priya}`, null, owner)).status, 200);
 

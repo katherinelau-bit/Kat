@@ -218,11 +218,12 @@ function viewBill() {
     var open = b.members.filter(function (m) { return !m.claimed; });
     h += '<div class="card"><h3>Join this bill</h3><p class="muted">' + esc(nm(b, b.payerId)) + ' paid and is sharing this bill with you. Join to pick what you ate.</p>';
     if (open.length) h += '<div><div class="small muted" style="margin-bottom:6px">Are you one of these?</div><div class="chips">' + open.map(function (m) { return '<button class="btn small" data-act="claim" data-uid="' + m.id + '">I am ' + esc(m.name) + '</button>'; }).join('') + '</div></div>';
-    h += '<div class="field"><label for="jname">' + (open.length ? 'Or enter your name' : 'Your name') + '</label><input type="text" id="jname" maxlength="40" placeholder="e.g. Wei Jie" value="' + esc(S.store.name || '') + '"></div><div><button class="btn primary" data-act="join">Join and pick my dishes</button></div></div>';
+    h += '<div class="field"><label for="jname">' + (open.length ? 'Or enter your name' : 'Your name') + '</label><input type="text" id="jname" maxlength="40" placeholder="e.g. Wei Jie" value="' + esc(S.store.name || '') + '"></div><div><button class="btn primary" data-act="join">Join and pick my dishes</button></div><p class="small muted">Paid this bill yourself? Don\'t pick a name here. Open the bill on the phone you created it on, or use your payer link.</p></div>';
     h += '<div class="card"><h3>What was ordered</h3><div class="receipt">' + b.items.map(function (it) { return '<div class="ln"><span class="nm">' + esc(it.name) + (it.qty > 1 ? '<span class="sub">' + it.qty + ' × ' + fmt(Math.round(it.price / it.qty)) + '</span>' : '') + '</span><span class="pr">' + fmt(it.price) + '</span></div>'; }).join('') + receiptTotals(b, c) + '</div></div>';
     return h;
   }
 
+  if (!isPayer) h += '<p class="small muted">You are <b>' + esc(me.name) + '</b> on this bill. <button class="btn small" data-act="leave">Not ' + esc(me.name) + '? Switch person</button></p>';
   var ac = meId; if (isPayer && S.acting && mem(b, S.acting)) ac = S.acting;
   var acm = mem(b, ac), my = c.per[ac], myPicks = acm.picks || [];
 
@@ -273,6 +274,7 @@ function viewBill() {
       if (st === 'sent') acts = '<button class="btn small primary" data-act="confirm" data-uid="' + m.id + '">Confirm received</button><button class="btn small" data-act="viewslip" data-uid="' + m.id + '">View slip</button>';
       else if (st === 'paid') acts = '<button class="btn small" data-act="unconfirm" data-uid="' + m.id + '">Undo</button>';
       else { if (s) acts += '<button class="btn small" data-act="markpaid" data-uid="' + m.id + '">Mark paid (cash)</button>'; acts += '<button class="btn small" data-act="remind" data-uid="' + m.id + '">Remind</button>'; }
+      if (m.claimed) acts += '<button class="btn small" data-act="resetlink" data-uid="' + m.id + '">Reset link</button>';
     }
     h += '<div class="person">' + av(b, m.id) + '<div class="grow"><div><b>' + esc(m.name) + (m.id === meId ? ' (you)' : '') + '</b></div><div class="small muted mono">' + (s ? fmt(owedBy(m, c)) : 'No items yet') + (m.remind && st === 'unpaid' && !m.isPayer ? ' · reminded ' + m.remind.count + '×, last ' + ago(m.remind.at) : '') + '</div></div>' + statusPill(m, c, m.isPayer) + (acts ? '<div class="acts" style="width:100%;padding-left:38px">' + acts + '</div>' : '') + '</div>';
   });
@@ -522,6 +524,15 @@ document.addEventListener('click', function (e) {
         .then(function (bl) { S.modal = { title: 'Payment slip from ' + nm(b, uid), src: URL.createObjectURL(bl) }; paintModal(); }).catch(function () { toast('Could not load the slip'); });
     } break;
     case 'remind': showReminder([uid], 'Remind ' + nm(b, uid)); break;
+    case 'leave': if (b) {
+      var bid = b.id, was = (mem(b, myId(b)) || {}).name;
+      bapi('POST', '/leave').then(function (j) { delete S.store.bills[bid]; if (S.store.name === was) S.store.name = ''; saveStore(); S.acting = null; S.bill = j.bill; render(); window.scrollTo(0, 0); toast('Done. Pick your own name, or join with it.'); }).catch(function (x) { toast(x.message); });
+    } break;
+    case 'resetlink': if (b) {
+      if (S.confirmReset !== uid) { S.confirmReset = uid; toast('Tap Reset link again: ' + nm(b, uid) + ' will need to pick their name again from the bill link'); setTimeout(function () { S.confirmReset = null; }, 4000); break; }
+      S.confirmReset = null;
+      bapi('POST', '/members/' + uid + '/reset').then(function (j) { setBill(j); render(); toast(nm(j.bill, uid) + ' can now pick their name again from the bill link'); }).catch(function (x) { toast(x.message); });
+    } break;
     case 'remindall': if (b) {
       var c = Split.calc(b), list = b.members.filter(function (m) { return !m.isPayer && (!c.per[m.id] || m.pay.status === 'unpaid'); }).map(function (m) { return m.id; });
       if (!list.length) toast('Everyone has paid or sent a slip'); else showReminder(list, 'Message for the group chat');
