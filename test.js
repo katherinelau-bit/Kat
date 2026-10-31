@@ -137,8 +137,8 @@ VISA ****1234  21.20`);
 
   // A real photo (orange thermal paper, curled, a finger over the corner), exactly as Tesseract read it:
   // lost decimal points, clipped labels, menu codes, names over two lines, "(8.90/ea)" prices of one, add-on lines.
-  // The first dish's price was unreadable, so 13 of the 14 dishes are expected.
-  r = parse(String.raw`;          bh CSMRERESE TT         Price (MYR)
+  // The first dish's price was unreadable: it gets what is left of the printed subtotal, so the bill tallies.
+  const orange = String.raw`;          bh CSMRERESE TT         Price (MYR)
 | EO1 Thal Halnanese Chicken Rice.    FE        90
 (8.90/ea)
 ® + Thigh + 1.00
@@ -182,12 +182,30 @@ nge                                         0.00
 imma YS            Base Amt.    Amount
 a NR
 fil bedi Bi Gis Sh a 131.80     13.18  |
-AEE Er REL BR VT      ig`);
-  assert.deepEqual(pick(r), ['1|CHARCOAL GRILLED CHARSIU|1000', '1|Shunde-Style Steamed Pork Ribs Rice|1590', '2|Thal Halnanese Chicken Rice|1780',
+AEE Er REL BR VT      ig`;
+  const orangeItems = ['1|Thal Halnanese Chicken Rice|990', '1|CHARCOAL GRILLED CHARSIU|1000', '1|Shunde-Style Steamed Pork Ribs Rice|1590', '2|Thal Halnanese Chicken Rice|1780',
     '2|Fried Basll Minced Pork Rice|3380', '1|Ice Thal Green Milk Tea|790', '2|Ice Classic Thal Milk Tea|1580', '1|Bralsed Tofu|490',
     '1|Ice Honey Lemon Juice|790', '1|Ice Chrysanthemum Flower Ellice|790', '1|THAI HAINANESE CHICKEN|3000', '1|Fried Basll Minced Pork Rice|1690',
-    '1|Thal Crispy Pork Rice (Takeaway)|1090', '1|Chicken Rice (Takeaway)|200']);
-  assert.deepEqual([r.service, r.sst, r.rounding, r.total, r.merchant], [1318, 1150, 2, 21630, '']);
+    '1|Thal Crispy Pork Rice (Takeaway)|1090', '1|Chicken Rice (Takeaway)|200'];
+  const tally = (x) => x.items.reduce((a, i) => a + i.line, 0) + x.service + x.sst + x.rounding;
+  r = parse(orange);
+  assert.deepEqual(pick(r), orangeItems);
+  assert.deepEqual([r.service, r.sst, r.rounding, r.total, r.merchant, r.filled, tally(r)], [1318, 1150, 2, 21630, '', 1, 21630]);
+
+  // Rounding line unreadable too: it is worked out from subtotal + charges vs the total.
+  r = parse(orange.replace(/rounding\s+0\.02\n/, ''));
+  assert.deepEqual(pick(r), orangeItems);
+  assert.deepEqual([r.rounding, tally(r)], [2, 21630]);
+
+  // A gap that no unpriced dish explains becomes one "Item not read" line, so the bill still tallies.
+  r = parse('Nasi Lemak  13.50\nTeh Tarik  2.80\nSubtotal  21.30\nSST 6%  1.28\nTotal  22.58');
+  assert.deepEqual(pick(r), ['1|Nasi Lemak|1350', '1|Teh Tarik|280', '1|Item not read (check receipt)|500']);
+  assert.equal(tally(r), 2258);
+
+  // A total nothing confirms (no subtotal, no matching payment) is not trusted: nothing is invented.
+  r = parse('Nasi Lemak  13.50\nTeh Tarik  2.80\nTotal  22.58');
+  assert.deepEqual(pick(r), ['1|Nasi Lemak|1350', '1|Teh Tarik|280']);
+  assert.equal(r.filled, 0);
 
   // A photo tilted 3 degrees where the reader split the price column into separate lines:
   // rebuilding rows from word positions puts each price back next to its item.

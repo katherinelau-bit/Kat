@@ -7,6 +7,10 @@
   var AMOUNT_STRICT = /(?:^|[^\d.,])(\(?-?\s*(?:RM\s*)?-?\d{1,5}[.,]\s?\d{2}\)?)\s*(?:[A-Z*]{1,2})?\s*\|?\s*$/i;
   // Faded receipts lose the decimal point: "17 80", "10:90" or "1590" also count, but only when the reading then adds up.
   var AMOUNT_LOOSE = /(?:^|[^\d.,:])(\(?-?\s*(?:RM\s*)?-?(?:\d{1,5}[.,:]\s?\d{2}|\d{1,4} \d{2}|\d{3,5}))\)?\s*(?:[A-Z*]{1,2})?\s*\|?\s*$/i;
+  var NOT_READ = 'Item not read (check receipt)';
+  var SUBTOTAL = /sub\s*-?\s*total|jumlah\s*kecil|sub\s*-?\s*jumlah/i;
+  // A dish line that starts with a menu code, maybe after a quantity: "E01 Thai...", "2 F01 Fried...", "M 02 THAI...".
+  var DISH_CODE = /^(?:\d{1,2}\s+)?(?:[A-Za-z]{1,2}\s+)?[A-Z]{1,3}\s?[0-9O]?\d[0-9O]?\s*[A-Za-z]{2}/;
   var SKIP = /sub\s*-?\s*total|jumlah\s*kecil|sub\s*-?\s*jumlah|cash|tunai|change|baki|balance|paid|tender|card|visa|master|amex|debit|credit|e-?wallet|tng|touch\s*n|grab\s*pay|boost|duitnow|qr\s*pay|item\s*count|no\.?\s*of\s*items|\bqty\b|discount|diskaun|voucher|deposit|\btel\b|phone|fax|invoice|receipt\s*no|bill\s*no|order\s*no|\btable\b|\bpax\b|cashier|\bdate\b|\btime\b|base\s*amt|summary/i;
   // Labels can lose their first letters at a curled edge ("ST (6%)", "RVICE CHARGE"), so these match fragments too.
   var SST = /\bs?st\b|\bgst\b|service\s*tax|\btax\b|cukai/i;
@@ -92,7 +96,7 @@
   function parseWith(text, AMOUNT) {
     var lines = String(text || '').split(/\r?\n/).map(function (l) { return fixDigits(l.replace(/\s+/g, ' ').trim()); }).filter(Boolean);
     var out = { merchant: '', date: parseDate(text || ''), items: [], service: 0, sst: 0, rounding: 0, total: 0 };
-    var totals = [], after = [], pendingName = '', last = null, itemsDone = false;
+    var totals = [], after = [], subs = [], rndRead = false, pendingName = '', last = null, itemsDone = false;
     lines.forEach(function (raw, idx) {
       var m = raw.match(AMOUNT), amt = m ? toSen(m[1]) : null;
       if (amt === null) {
@@ -101,9 +105,16 @@
         // A name whose price is on the next line ("2 x 7.50   15.00") waits for it.
         var next = lines[idx + 1] || '', nm = next.match(AMOUNT);
         if (nm && letters(next.slice(0, nm.index)) < 2) { pendingName = raw; return; }
+        // A dish whose price could not be read ("E01 Thai Hainanese Chicken Rice   . 90"): kept without a price,
+        // which is worked out from the totals at the end.
+        if (!itemsDone && !e && letters(raw) >= 6 && (DISH_CODE.test(raw.replace(/^[^A-Za-z0-9]+/, '')) || EACH.test(next))) {
+          // Drop the garbled price at the end ("Rice.    FE   90", "Rice. EER"): short tokens, numbers, or anything after a full stop.
+          var name = cleanName(raw.replace(/\.\s+\S.*$/, '').replace(/(\s+(?:\S{1,2}|\d+))+\s*$/, ''));
+          if (letters(name) >= 4) { last = { name: name, qty: 1, line: 0, each: 0, mods: 0, unpriced: true }; out.items.push(last); return; }
+        }
         if (last && !itemsDone) {
           // The rest of the dish's name on the next line ("Rice (15.90/ea)"); a price of one there gives the quantity.
-          if (e) fitEach(last, e);
+          if (e && last.unpriced) last.each = e; else if (e) fitEach(last, e);
           var more = raw.replace(EACH, ' ').replace(/\([^)]*\)?/g, ' ').split(/\s+/).filter(function (w) { return w && !/[()\/]/.test(w); }).join(' ');
           if (letters(more) >= 3 && !TOTAL.test(more) && !SKIP.test(more) && !MODIFIER.test(more)) last.name = (last.name + ' ' + cleanName(more)).slice(0, 80).trim();
           return;
@@ -114,14 +125,19 @@
       }
       var text = raw.slice(0, m.index + m[0].indexOf(m[1])).trim();
       var pct = (text.match(/(\d{1,2})\s*%/) || [])[1];
-      if (ROUNDING.test(text)) { out.rounding = Math.max(-10000, Math.min(10000, amt)); itemsDone = itemsDone || out.items.length > 0; return; }
+      if (ROUNDING.test(text)) { out.rounding = Math.max(-10000, Math.min(10000, amt)); rndRead = true; itemsDone = itemsDone || out.items.length > 0; return; }
       // The first SST and service amounts win; a "charges summary" after the total repeats them.
       if (SST.test(text) && !/charge/i.test(text) || pct === '6' || pct === '8') { out.sst = out.sst || Math.abs(amt); itemsDone = itemsDone || out.items.length > 0; return; }
       if (SERVICE.test(text) || pct === '10' || pct === '5') { out.service = out.service || Math.abs(amt); itemsDone = itemsDone || out.items.length > 0; return; }
+      if (SUBTOTAL.test(text)) { subs.push(Math.abs(amt)); itemsDone = itemsDone || out.items.length > 0; pendingName = ''; return; }
       if (SKIP.test(text)) { if (out.items.length) { itemsDone = true; after.push(Math.abs(amt)); } pendingName = ''; return; }
       if (TOTAL.test(text)) { totals.push(Math.abs(amt)); itemsDone = true; pendingName = ''; return; }
       if (itemsDone) { after.push(Math.abs(amt)); return; }
-      if (amt <= 0 || MODIFIER.test(text)) return;
+      if (amt <= 0 || MODIFIER.test(text)) {
+        // An add-on under a dish without a price ("+ Thigh + 1.00") helps estimate that dish's price.
+        if (amt > 0 && last && last.unpriced) last.mods += amt;
+        return;
+      }
       if (letters(text) < 2) {
         if (!pendingName) return;
         text = pendingName + ' ' + text;
@@ -132,26 +148,57 @@
       last = { name: nq.name, qty: nq.qty, line: nq.line, each: 0 };
       out.items.push(last);
     });
-    out.items = out.items.slice(0, 80);
-    out.items.forEach(function (i) { i.each = Math.round(i.line / i.qty); });
-    // The total is the biggest "total" line (a subtotal is smaller). If none was read, use the printed amount that matches what was read.
-    var sum = out.service + out.sst + out.rounding;
-    out.items.forEach(function (i) { sum += i.line; });
+    reconcile(out, totals, after, subs, rndRead);
+    return out;
+  }
+
+  // Makes the reading tally with the receipt when the receipt's own numbers can be trusted:
+  // a dish whose price was unreadable gets what is left of the subtotal, unread rounding gets the last few sen,
+  // and any other gap becomes one "Item not read" line for the payer to rename.
+  function reconcile(out, totals, after, subs, rndRead) {
+    var priced = function () { var s = 0; out.items.forEach(function (i) { s += i.line; }); return s; };
+    var charges = out.service + out.sst;
+    // The total is the biggest "total" line (a subtotal, perhaps read as "total" from a clipped "Subtotal", is smaller).
     totals.sort(function (a, b) { return b - a; });
-    out.total = totals[0] || 0;
-    if (!out.total || Math.abs(out.total - sum) > 2) {
-      var match = totals.concat(after).filter(function (a) { return Math.abs(a - sum) <= 2; })[0];
+    var T = totals[0] || 0;
+    // The subtotal: a printed amount that, with the service charge and SST, comes within 5 sen of the total.
+    var sub = subs.concat(totals.slice(1), after).filter(function (c) { return T && c <= T && Math.abs(T - c - charges - (rndRead ? out.rounding : 0)) <= 5; })[0] || 0;
+    // Trust the total only if the receipt confirms it: subtotal plus charges, or the same amount paid (VISA, cash).
+    var trusted = T && (sub || after.indexOf(T) > -1 || totals.indexOf(T, 1) > -1);
+    if (sub && !rndRead) out.rounding = T - sub - charges;
+    var target = sub || (trusted ? T - charges - out.rounding : 0);
+    var open = out.items.filter(function (i) { return i.unpriced; });
+    out.filled = 0;
+    if (target) {
+      // Dishes without a price: one takes whatever is left; several use their "(x/ea)" + add-ons estimate first.
+      open.forEach(function (i) { if (open.length > 1 && i.each) { i.line = i.each * i.qty + i.mods; i.filled = true; out.filled++; } });
+      var rest = open.filter(function (i) { return !i.line; }), gap = target - priced();
+      if (rest.length === 1 && gap > 0) { rest[0].line = gap; rest[0].filled = true; out.filled++; }
+    } else {
+      open.forEach(function (i) { if (i.each) { i.line = i.each * i.qty + i.mods; i.filled = true; out.filled++; } });
+    }
+    out.items = out.items.filter(function (i) { return i.line > 0; }).slice(0, 80);
+    if (target) {
+      var left = target - priced();
+      // Unread rounding: total minus everything else, when that is only a few sen.
+      if (!sub && !rndRead && Math.abs(left) <= 5) { out.rounding += left; left = 0; }
+      if (left >= 10) { out.items.push({ name: NOT_READ, qty: 1, line: left, filled: true }); out.filled++; }
+    }
+    out.items.forEach(function (i) { i.each = Math.round(i.line / i.qty); delete i.unpriced; delete i.mods; });
+    var sum = priced() + charges + out.rounding;
+    out.total = T;
+    if (!T || Math.abs(T - sum) > 2) {
+      var match = totals.concat(after, subs).filter(function (a) { return Math.abs(a - sum) <= 2; })[0];
       if (match) out.total = match;
     }
-    return out;
   }
 
   function parse(text) {
     var strict = parseWith(text, AMOUNT_STRICT);
     if (balanced(strict)) return strict;
+    // The loose reading (prices without a decimal point) wins only when it is more believable.
     var loose = parseWith(text, AMOUNT_LOOSE);
-    // Loose reading wins only when it adds up, or finds clearly more items.
-    return balanced(loose) || loose.items.length > strict.items.length + 1 ? loose : strict;
+    return score(loose) > score(strict) ? loose : strict;
   }
 
   // Rebuilds the receipt's rows from word positions (Tesseract "blocks" output), so a price at the far right
@@ -178,16 +225,23 @@
     return rows.map(function (r) { return r.w.sort(function (a, b) { return a.x - b.x; }).map(function (w) { return w.t; }).join(' '); }).join('\n');
   }
 
-  // How believable a reading is: items and charges found, and a big bonus when they add up to a printed total.
+  // How believable a reading is: items and charges found, a big bonus when they add up to a printed total,
+  // and a penalty for every price that had to be worked out instead of read (the "Item not read" line most of all).
   function score(r) {
-    var sum = r.service + r.sst + r.rounding;
-    r.items.forEach(function (i) { sum += i.line; });
-    return r.items.length + (r.total ? 2 : 0) + (r.service ? 1 : 0) + (r.sst ? 1 : 0) + (r.total && r.items.length && Math.abs(sum - r.total) <= 2 ? 20 : 0);
+    var sum = r.service + r.sst + r.rounding, guess = 0;
+    r.items.forEach(function (i) { sum += i.line; if (i.name === NOT_READ) guess = 15; });
+    return r.items.length + (r.total ? 2 : 0) + (r.service ? 1 : 0) + (r.sst ? 1 : 0) + (r.total && r.items.length && Math.abs(sum - r.total) <= 2 ? 20 : 0)
+      - 3 * (r.filled || 0) - guess;
   }
-  function balanced(r) { return score(r) >= 20; }
+  // Read cleanly: adds up with nothing worked out.
+  function balanced(r) { return score(r) >= 20 && !r.filled; }
+  // Good enough to stop reading: adds up, with at most one dish's price worked out and no "Item not read" line.
+  function goodEnough(r) {
+    return balanced(r) || (r.filled === 1 && score(r) >= 20 && !r.items.some(function (i) { return i.name === NOT_READ; }));
+  }
   function best(readings) {
     return readings.filter(Boolean).reduce(function (a, b) { return !a || score(b) > score(a) ? b : a; }, null);
   }
 
-  return { parse: parse, rowsFromBlocks: rowsFromBlocks, best: best, balanced: balanced };
+  return { parse: parse, rowsFromBlocks: rowsFromBlocks, best: best, balanced: balanced, goodEnough: goodEnough };
 });

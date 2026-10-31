@@ -316,7 +316,7 @@ async function readOnPhone(file) {
     await w.setParameters({ tessedit_pageseg_mode: psm });
     var out = (await w.recognize(c, {}, { text: true, blocks: true })).data;
     r = P.best([r, P.parse(out.text), P.parse(P.rowsFromBlocks(out.blocks))]);
-    if (P.balanced(r)) break;
+    if (P.goodEnough(r)) break;
   }
   return r;
 }
@@ -334,7 +334,11 @@ async function doScan() {
     if (r.date) d.date = r.date;
     d.scanTotal = r.total;
     var gap = r.total ? r.total - draftTotal(d) : 0;
-    d.scanNote = Math.abs(gap) > 1 ? 'Read ' + r.items.length + ' items. They come to ' + fmt(draftTotal(d)) + ' but the receipt says ' + fmt(r.total) + ', so ' + fmt(Math.abs(gap)) + (gap > 0 ? ' is missing or misread' : ' too much was read') + '. Please check the items against the receipt.' : 'Read ' + r.items.length + ' items. Please check them against the receipt.';
+    // Prices worked out from the receipt's totals (not read directly) are named so the payer can check them.
+    var worked = r.filled ? ' ' + (r.filled === 1 ? 'One price was' : r.filled + ' prices were') + ' unreadable and worked out from the receipt total: ' +
+      r.items.filter(function (i) { return i.filled; }).map(function (i) { return i.name + ' (' + fmt(i.line) + ')'; }).join(', ') + '.' : '';
+    d.scanNote = Math.abs(gap) > 1 ? 'Read ' + r.items.length + ' items. They come to ' + fmt(draftTotal(d)) + ' but the receipt says ' + fmt(r.total) + ', so ' + fmt(Math.abs(gap)) + (gap > 0 ? ' is missing or misread' : ' too much was read') + '. Please check the items against the receipt.'
+      : 'Read ' + r.items.length + ' items, matching the receipt total of ' + fmt(draftTotal(d)) + '.' + worked + ' Please check them against the receipt.';
   } catch (e) { d.scanNote = e.status === 429 ? 'Too many scans for now. Type the items instead.' : 'Could not read that receipt. Try a clearer, flatter photo, or type the items.'; }
   S.scanning = false; render();
 }
