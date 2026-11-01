@@ -274,6 +274,36 @@ AEE Er REL BR VT      ig`;
   console.log('passed: payment slip amounts');
 }
 
+// Trip maths: shares, balances that always add up to zero, and settle-up transfers.
+function tripMaths() {
+  const Settle = require('./public/settle.js');
+  assert.deepEqual(Settle.shares({ amount: 1000, mode: 'equal', among: ['c', 'a', 'b'] }), { a: 334, b: 333, c: 333 });
+  assert.deepEqual(Settle.shares({ amount: 1000, mode: 'exact', among: ['a', 'b'], shares: { a: 700, b: 300 } }), { a: 700, b: 300 });
+  // Penang weekend: Aisha pays the hotel for all four, Ben pays dinner for three, Chen pays Grab for two.
+  const trip = { members: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }], expenses: [
+    { paidBy: 'a', amount: 40000, mode: 'equal', among: ['a', 'b', 'c', 'd'] },
+    { paidBy: 'b', amount: 9000, mode: 'equal', among: ['a', 'b', 'c'] },
+    { paidBy: 'c', amount: 2500, mode: 'exact', among: ['c', 'd'], shares: { c: 1000, d: 1500 } }], payments: [] };
+  let bal = Settle.balances(trip);
+  assert.deepEqual(Object.fromEntries(Object.entries(bal).map(([k, v]) => [k, v.net])), { a: 27000, b: -4000, c: -11500, d: -11500 });
+  assert.equal(Object.values(bal).reduce((s, v) => s + v.net, 0), 0);
+  let tr = Settle.transfers(bal);
+  assert.deepEqual(tr, [{ from: 'c', to: 'a', amount: 11500 }, { from: 'd', to: 'a', amount: 11500 }, { from: 'b', to: 'a', amount: 4000 }]);
+  assert.equal(Settle.total(trip), 51500);
+  // Once Chen's payment (slip sent) is in, Chen no longer appears and the rest is unchanged.
+  trip.payments = [{ from: 'c', to: 'a', amount: 11500 }];
+  tr = Settle.transfers(Settle.balances(trip));
+  assert.deepEqual(tr, [{ from: 'd', to: 'a', amount: 11500 }, { from: 'b', to: 'a', amount: 4000 }]);
+  // Two creditors, uneven amounts: everything still clears exactly.
+  const t2 = { members: [{ id: 'a' }, { id: 'b' }, { id: 'c' }], expenses: [{ paidBy: 'a', amount: 1001, mode: 'equal', among: ['a', 'b', 'c'] }, { paidBy: 'b', amount: 500, mode: 'equal', among: ['a', 'b', 'c'] }], payments: [] };
+  const b2 = Settle.balances(t2), tr2 = Settle.transfers(b2);
+  const after = { ...Object.fromEntries(Object.entries(b2).map(([k, v]) => [k, v.net])) };
+  tr2.forEach((x) => { after[x.from] += x.amount; after[x.to] -= x.amount; });
+  assert.deepEqual(Object.values(after), [0, 0, 0]);
+  assert.ok(tr2.length <= 2);
+  console.log('passed: trip settle-up maths');
+}
+
 // "Notify me when someone pays": only the payer subscribes, a slip notifies their phones, unsubscribed phones are dropped.
 async function pushNotifications() {
   const sent = [];
@@ -306,6 +336,16 @@ async function pushNotifications() {
   r = await call('DELETE', `/api/bills/${c.id}/push`, { endpoint: 'https://push.example/phone' }, c.token);
   assert.equal(r.body.bill.notify, false);
 
+  // Trips: whoever is being paid gets the notification.
+  const fb2 = fakeBlobs(), th = createApi({ store: createBlobStore(fb2), trips: createBlobStore(fb2, 'trip/'), push: fake });
+  const tcall = async (method, url, body, token) => (await th(new Request('https://example.test' + url, { method, headers: { 'content-type': 'application/json', 'x-token': token || '' }, body: body ? JSON.stringify(body) : undefined }))).json();
+  const tr = await tcall('POST', '/api/trips', { title: 'Penang weekend', name: 'Aisha' });
+  const chen = await tcall('POST', `/api/trips/${tr.id}/join`, { name: 'Chen' });
+  assert.equal((await tcall('POST', `/api/trips/${tr.id}/push`, { subscription: sub('aisha') }, tr.token)).trip.notify, true);
+  sent.length = 0;
+  await tcall('POST', `/api/trips/${tr.id}/payments`, { to: tr.memberId, amount: 11500 }, chen.token);
+  assert.deepEqual(sent.map((s) => [s.to, s.payload.title, s.payload.url]), [['https://push.example/aisha', 'Chen sent you RM 115.00', '/t/' + tr.id]]);
+
   // The real sender makes its keys once and keeps them in the store.
   const { createPush } = require('./lib/push.js');
   const kept = new Map(), st = { getImg: async (k) => kept.get(k) || null, putImg: async (k, v) => { kept.set(k, v); } };
@@ -330,8 +370,93 @@ async function pushNotifications() {
   console.log('passed: payment notifications' + (ece ? ' (encryption checked against http_ece)' : ''));
 }
 
+// A trip from start to finish: join, add expenses, who may change what, then settle up until nobody owes anything.
+async function tripSuite(name, call) {
+  const Settle = require('./public/settle.js');
+  const JPG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(40, 1)]).toString('base64');
+  const nets = (t) => { const b = Settle.balances(t); return t.members.map((x) => b[x.id].net); };
+  let r = await call('POST', '/api/trips', { title: 'Penang weekend', name: 'Aisha' });
+  assert.equal(r.status, 200);
+  const { id, token: aT, memberId: a } = r.body;
+  const B = (await call('POST', `/api/trips/${id}/join`, { name: 'Ben' })).body;
+  const C = (await call('POST', `/api/trips/${id}/join`, { name: 'Chen' })).body;
+  assert.equal((await call('POST', `/api/trips/${id}/members`, { name: 'Dina' })).status, 401, 'strangers cannot add people');
+  const d = (await call('POST', `/api/trips/${id}/members`, { name: 'Dina' }, B.token)).body.memberId;
+  const D = (await call('POST', `/api/trips/${id}/join`, { memberId: d })).body;
+  assert.equal(D.memberId, d);
+  const all = [a, B.memberId, C.memberId, d];
+
+  // Expenses: hotel for all four (with receipt), dinner for three, Grab split by exact amounts.
+  r = await call('POST', `/api/trips/${id}/expenses`, { title: 'Hotel', date: '2026-11-01', paidBy: a, amount: 40000, mode: 'equal', among: all, receipt: JPG }, aT);
+  assert.equal(r.status, 200); assert.equal(r.body.expenseId, 'e1');
+  r = await call('POST', `/api/trips/${id}/expenses`, { title: 'Dinner', paidBy: B.memberId, amount: 9000, among: [a, B.memberId, C.memberId] }, B.token);
+  assert.equal(r.body.expenseId, 'e2');
+  assert.equal((await call('POST', `/api/trips/${id}/expenses`, { title: 'Grab', paidBy: C.memberId, amount: 2500, mode: 'exact', among: [C.memberId, d], shares: { [C.memberId]: 1000, [d]: 1000 } }, C.token)).status, 400, 'exact shares must add up');
+  assert.equal((await call('POST', `/api/trips/${id}/expenses`, { title: 'Grab', paidBy: 'nobody123', amount: 2500, among: all }, C.token)).status, 400);
+  assert.equal((await call('POST', `/api/trips/${id}/expenses`, { title: 'Grab', paidBy: C.memberId, amount: 2500, among: all })).status, 401);
+  r = await call('POST', `/api/trips/${id}/expenses`, { title: 'Grab', paidBy: C.memberId, amount: 2500, mode: 'exact', among: [C.memberId, d], shares: { [C.memberId]: 1000, [d]: 1500 } }, C.token);
+  assert.equal(r.status, 200);
+  assert.equal((await call('GET', `/api/trips/${id}/img/receipt/e1`)).body.length, 44);
+
+  // Only whoever added an expense, or the trip's maker, can change it.
+  assert.equal((await call('PUT', `/api/trips/${id}/expenses/e1`, { title: 'Hotel', paidBy: a, amount: 1, among: all }, B.token)).status, 403);
+  assert.equal((await call('PUT', `/api/trips/${id}/expenses/e3`, { title: 'Grab to Batu Ferringhi', paidBy: C.memberId, amount: 2500, mode: 'exact', among: [C.memberId, d], shares: { [C.memberId]: 1000, [d]: 1500 } }, aT)).status, 200);
+
+  let t = (await call('GET', `/api/trips/${id}`)).body.trip;
+  assert.equal(JSON.stringify(t).includes(aT), false, 'tokens never leave the server');
+  assert.equal(t.expenses[2].title, 'Grab to Batu Ferringhi');
+  assert.deepEqual(nets(t), [27000, -4000, -11500, -11500]);
+  // Chen and Dina owe the same, so their order follows their (random) ids; compare without order.
+  assert.deepEqual(Settle.transfers(Settle.balances(t)).map((x) => [x.from, x.to, x.amount].join()).sort(), [[C.memberId, a, 11500], [d, a, 11500], [B.memberId, a, 4000]].map((x) => x.join()).sort());
+
+  // QR: each person adds their own.
+  assert.equal((await call('POST', `/api/trips/${id}/qr`, { image: JPG }, aT)).body.trip.members[0].hasQr, true);
+  assert.equal((await call('GET', `/api/trips/${id}/img/qr/${a}`)).status, 200);
+
+  // Chen pays Aisha with a slip; only the two of them see it; only Aisha confirms.
+  r = await call('POST', `/api/trips/${id}/payments`, { to: a, amount: 11500, image: JPG }, C.token);
+  const p1 = r.body.paymentId; t = r.body.trip;
+  assert.deepEqual(t.payments.map((x) => [x.from, x.to, x.amount, x.status, x.hasSlip]), [[C.memberId, a, 11500, 'sent', true]]);
+  assert.equal(Settle.transfers(Settle.balances(t)).some((x) => x.from === C.memberId), false, 'not asked to pay twice');
+  assert.equal((await call('GET', `/api/trips/${id}/img/slip/${p1}`, null, aT)).status, 200);
+  assert.equal((await call('GET', `/api/trips/${id}/img/slip/${p1}`, null, B.token)).status, 403);
+  assert.equal((await call('GET', `/api/trips/${id}/img/slip/${p1}`)).status, 401);
+  assert.equal((await call('POST', `/api/trips/${id}/payments/${p1}`, { action: 'confirm' }, B.token)).status, 403);
+  assert.equal((await call('POST', `/api/trips/${id}/payments/${p1}`, { action: 'confirm' }, aT)).body.trip.payments[0].status, 'paid');
+
+  // Dina pays cash: Aisha records it as received. Ben's first payment is rejected, then paid properly.
+  r = await call('POST', `/api/trips/${id}/payments/received`, { from: d, amount: 11500 }, aT);
+  assert.equal(r.body.trip.payments[1].status, 'paid');
+  const p3 = (await call('POST', `/api/trips/${id}/payments`, { to: a, amount: 4000 }, B.token)).body.paymentId;
+  r = await call('POST', `/api/trips/${id}/payments/${p3}`, { action: 'reject' }, aT);
+  assert.equal(r.body.trip.payments.length, 2);
+  assert.deepEqual(Settle.transfers(Settle.balances(r.body.trip)), [{ from: B.memberId, to: a, amount: 4000 }]);
+  const p4 = (await call('POST', `/api/trips/${id}/payments`, { to: a, amount: 4000 }, B.token)).body.paymentId;
+  t = (await call('POST', `/api/trips/${id}/payments/${p4}`, { action: 'confirm' }, aT)).body.trip;
+  assert.deepEqual(nets(t), [0, 0, 0, 0]);
+  assert.deepEqual(Settle.transfers(Settle.balances(t)), []);
+
+  // People: someone in an expense cannot be removed; a new, unused person can.
+  assert.equal((await call('DELETE', `/api/trips/${id}/members/${d}`, null, aT)).status, 400);
+  const e = (await call('POST', `/api/trips/${id}/members`, { name: 'Eve' }, aT)).body.memberId;
+  assert.equal((await call('DELETE', `/api/trips/${id}/members/${e}`, null, B.token)).status, 403);
+  assert.equal((await call('DELETE', `/api/trips/${id}/members/${e}`, null, aT)).status, 200);
+  assert.equal((await call('POST', `/api/trips/${id}/leave`, null, C.token)).status, 200);
+  assert.equal((await call('POST', `/api/trips/${id}/auth`, null, C.token)).status, 401);
+
+  // Deleting: an expense by whoever added it; the trip only by its maker.
+  assert.equal((await call('DELETE', `/api/trips/${id}/expenses/e2`, null, D.token)).status, 403);
+  assert.equal((await call('DELETE', `/api/trips/${id}/expenses/e2`, null, B.token)).body.trip.expenses.length, 2);
+  assert.equal((await call('DELETE', `/api/trips/${id}`, null, B.token)).status, 403);
+  assert.equal((await call('DELETE', `/api/trips/${id}`, null, aT)).status, 200);
+  assert.equal((await call('GET', `/api/trips/${id}`)).status, 404);
+  assert.equal((await call('GET', `/api/trips/${id}/img/qr/${a}`)).status, 404);
+  console.log('passed: trips, ' + name);
+}
+
 (async () => {
   receiptParsing();
+  tripMaths();
   await pushNotifications();
   await new Promise((r) => server.listen(0, r));
   const base = 'http://localhost:' + server.address().port;
@@ -341,14 +466,17 @@ async function pushNotifications() {
     return { status: r.status, body: ct.includes('json') ? await r.json() : Buffer.from(await r.arrayBuffer()) };
   };
   await suite('self-hosted server (SQLite)', viaHttp);
+  await tripSuite('self-hosted server (SQLite)', viaHttp);
 
-  const handle = createApi({ store: createBlobStore(fakeBlobs()) });
+  const fb = fakeBlobs();
+  const handle = createApi({ store: createBlobStore(fb), trips: createBlobStore(fb, 'trip/') });
   const viaFunction = async (method, url, body, token) => {
     const r = await handle(new Request('https://example.test' + url, { method, headers: { 'content-type': 'application/json', 'x-token': token || '' }, body: body ? JSON.stringify(body) : undefined }));
     const ct = r.headers.get('content-type') || '';
     return { status: r.status, body: ct.includes('json') ? await r.json() : Buffer.from(await r.arrayBuffer()) };
   };
   await suite('Netlify function (Blobs stand-in)', viaFunction);
+  await tripSuite('Netlify function (Blobs stand-in)', viaFunction);
 
   // The real @netlify/blobs client against its own local server, if `npm install` has been run.
   let blobsPkg, blobsServerPkg;

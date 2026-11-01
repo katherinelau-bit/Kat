@@ -6,6 +6,7 @@ import blobs from '../../lib/blobs-store.js';
 const store = getStore({ name: 'bei-cin-lah', consistency: 'strong' });
 const handle = core.createApi({
   store: blobs.createBlobStore(store),
+  trips: blobs.createBlobStore(store, 'trip/'),
   apiKey: process.env.ANTHROPIC_API_KEY || '',
   model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5',
 });

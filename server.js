@@ -18,6 +18,7 @@ const db = new DatabaseSync(path.join(DATA_DIR, 'bei-cin-lah.db'));
 db.exec('PRAGMA journal_mode=WAL');
 db.exec('CREATE TABLE IF NOT EXISTS bills(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)');
 db.exec('CREATE TABLE IF NOT EXISTS images(key TEXT PRIMARY KEY, data TEXT NOT NULL)');
+db.exec('CREATE TABLE IF NOT EXISTS trips(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)');
 const q = {
   getBill: db.prepare('SELECT data FROM bills WHERE id=?'),
   putBill: db.prepare('INSERT INTO bills(id,data,created_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data'),
@@ -25,6 +26,9 @@ const q = {
   getImg: db.prepare('SELECT data FROM images WHERE key=?'),
   putImg: db.prepare('INSERT OR REPLACE INTO images(key,data) VALUES(?,?)'),
   delImg: db.prepare('DELETE FROM images WHERE key=?'),
+  getTrip: db.prepare('SELECT data FROM trips WHERE id=?'),
+  putTrip: db.prepare('INSERT INTO trips(id,data,created_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data'),
+  delTrip: db.prepare('DELETE FROM trips WHERE id=?'),
 };
 const store = {
   async getBill(id) { const r = q.getBill.get(id); return r ? JSON.parse(r.data) : null; },
@@ -42,7 +46,20 @@ const store = {
   async putImg(key, data) { q.putImg.run(key, data); },
   async delImg(key) { q.delImg.run(key); },
 };
-const handleApi = createApi({ store, apiKey: process.env.ANTHROPIC_API_KEY || '', model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5' });
+// Trips use the same interface as bills (getBill/putBill/update...), stored in their own table.
+const trips = {
+  async getBill(id) { const r = q.getTrip.get(id); return r ? JSON.parse(r.data) : null; },
+  async putBill(t) { q.putTrip.run(t.id, JSON.stringify(t), t.createdAt); },
+  async delBill(id) { q.delTrip.run(id); },
+  async update(id, fn) {
+    const r = q.getTrip.get(id);
+    if (!r) throw new HttpError(404, 'Trip not found');
+    const t = JSON.parse(r.data), result = fn(t);
+    q.putTrip.run(t.id, JSON.stringify(t), t.createdAt);
+    return { bill: t, result };
+  },
+};
+const handleApi = createApi({ store, trips, apiKey: process.env.ANTHROPIC_API_KEY || '', model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5' });
 
 async function toRequest(req, url) {
   const chunks = []; let size = 0;
@@ -55,7 +72,7 @@ async function toRequest(req, url) {
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json', '.gz': 'application/gzip' };
 function serveStatic(res, pathname) {
-  const spa = pathname === '/' || pathname === '/new' || /^\/b\/[a-z0-9]+(\/edit)?$/.test(pathname);
+  const spa = pathname === '/' || pathname === '/new' || pathname === '/t/new' || /^\/b\/[a-z0-9]+(\/edit)?$/.test(pathname) || /^\/t\/[a-z0-9]+(\/add|\/e\/[a-z0-9]+)?$/.test(pathname);
   const file = path.normalize(path.join(PUB, spa ? '/index.html' : pathname));
   if (!file.startsWith(PUB + path.sep)) { res.writeHead(404); return res.end('Not found'); }
   fs.readFile(file, (err, data) => {

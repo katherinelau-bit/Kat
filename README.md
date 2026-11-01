@@ -54,6 +54,7 @@ Claude scans are limited to 15 per hour per visitor to protect your bill. Scans 
 - `lib/core.js`: the whole API, the same code on Netlify and on a normal server.
 - `netlify/functions/api.mjs` and `lib/blobs-store.js`: the Netlify side, storing bills in Netlify Blobs.
 - `server.js`: the self-hosted side, storing bills in a SQLite file.
+- `public/settle.js`: the trip maths (shares, balances, settle-up transfers), shared by server and browser.
 - `public/split.js`: the split maths, shared by server and browser. Amounts are whole sen so shares always add
   up to the receipt total.
 - `public/receipt-parse.js`: turns the text read off a receipt photo into items and charges.
@@ -71,6 +72,11 @@ Claude scans are limited to 15 per hour per visitor to protect your bill. Scans 
   tab does not lose it; the home page offers to continue or discard it. After creating a bill, the payer can tap
   "Edit items" to change the name, date, dishes or charges. Ticks stay on the dishes that are kept, a removed
   dish comes off whoever ticked it, and payments already confirmed keep their amount.
+- **Trips and events.** "New trip" on the home page is for a trip or event where different people pay along
+  the way. Everyone joins from the trip link, adds what they paid (a receipt photo fills in the total), and picks
+  who shares it, equally or by exact amounts. The trip page shows each person's balance and a short list of
+  transfers that settles everyone up. Each person adds their own DuitNow QR; whoever pays uploads a slip or marks
+  cash, and the person paid confirms. Only whoever added an expense, or who made the trip, can change it.
 - **Summary picture.** "Share summary" on a bill makes a picture of who ate what, how much each person owes and
   who has paid, to share in the group chat (phones) or save (computers).
 - **Reminders.** "Remind" and "Remind everyone" write a ready message to send on WhatsApp, and people who open
