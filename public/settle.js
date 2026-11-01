@@ -1,13 +1,28 @@
 /* Trip maths: who owes what across many expenses, and the fewest transfers to settle up.
  * Shared by the server and the browser. All amounts are integer sen (cents). */
 (function (root, factory) {
-  var m = factory();
-  if (typeof module === 'object' && module.exports) module.exports = m; else root.Settle = m;
-})(typeof self !== 'undefined' ? self : this, function () {
+  var node = typeof module === 'object' && module.exports;
+  var m = factory(node ? require('./split.js') : root.Split);
+  if (node) module.exports = m; else root.Settle = m;
+})(typeof self !== 'undefined' ? self : this, function (Split) {
+  // An expense split by items works like a bill: people pick dishes, service charge and SST follow each person's
+  // dishes (public/split.js), and dishes nobody picked stay with whoever paid.
+  function itemsCalc(e) {
+    var picks = e.picks || {};
+    return Split.calc({ items: e.items || [], service: e.service || 0, sst: e.sst || 0, rounding: e.rounding || 0,
+      members: Object.keys(picks).map(function (id) { return { id: id, picks: picks[id] }; }) });
+  }
+
   // Each person's part of one expense. "equal": split among the chosen people, leftover sen to the first by id.
-  // "exact": the amounts typed in (they must add up to the expense; the server checks).
+  // "exact": the amounts typed in (they must add up to the expense; the server checks). "items": from the dishes picked.
   function shares(e) {
     var out = {}, among = (e.among || []).slice().sort();
+    if (e.mode === 'items') {
+      var c = itemsCalc(e);
+      Object.keys(c.per).forEach(function (id) { out[id] = c.per[id].total; });
+      if (c.unclaimed.total) out[e.paidBy] = (out[e.paidBy] || 0) + c.unclaimed.total;
+      return out;
+    }
     if (e.mode === 'exact') { among.forEach(function (id) { out[id] = (e.shares && e.shares[id]) || 0; }); return out; }
     if (!among.length) return out;
     var base = Math.floor(e.amount / among.length), rem = e.amount - base * among.length;
@@ -49,5 +64,5 @@
 
   function total(t) { var s = 0; (t.expenses || []).forEach(function (e) { s += e.amount; }); return s; }
 
-  return { shares: shares, balances: balances, transfers: transfers, total: total };
+  return { shares: shares, balances: balances, transfers: transfers, total: total, itemsCalc: itemsCalc };
 });

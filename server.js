@@ -72,7 +72,7 @@ async function toRequest(req, url) {
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json', '.gz': 'application/gzip' };
 function serveStatic(res, pathname) {
-  const spa = pathname === '/' || pathname === '/new' || pathname === '/t/new' || /^\/b\/[a-z0-9]+(\/edit)?$/.test(pathname) || /^\/t\/[a-z0-9]+(\/add|\/e\/[a-z0-9]+)?$/.test(pathname);
+  const spa = pathname === '/' || pathname === '/new' || pathname === '/t/new' || /^\/b\/[a-z0-9]+(\/edit)?$/.test(pathname) || /^\/t\/[a-z0-9]+(\/add|\/[ex]\/[a-z0-9]+)?$/.test(pathname);
   const file = path.normalize(path.join(PUB, spa ? '/index.html' : pathname));
   if (!file.startsWith(PUB + path.sep)) { res.writeHead(404); return res.end('Not found'); }
   fs.readFile(file, (err, data) => {

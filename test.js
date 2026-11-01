@@ -301,6 +301,13 @@ function tripMaths() {
   tr2.forEach((x) => { after[x.from] += x.amount; after[x.to] -= x.amount; });
   assert.deepEqual(Object.values(after), [0, 0, 0]);
   assert.ok(tr2.length <= 2);
+  // Split by items: each person's dishes plus their part of service charge and SST; unpicked dishes stay with the payer.
+  const meal = { paidBy: 'a', amount: 5830, mode: 'items', service: 500, sst: 330, rounding: 0, items: [{ id: 'i1', name: 'Nasi lemak', qty: 1, price: 2000 }, { id: 'i2', name: 'Teh tarik', qty: 2, price: 1000 }, { id: 'i3', name: 'Satay', qty: 1, price: 2000 }],
+    picks: { b: ['i1'], c: ['i2'], a: ['i2'] } };
+  const ms = Settle.shares(meal);
+  assert.equal(Object.values(ms).reduce((x, y) => x + y, 0), 5830, 'shares add up to the receipt');
+  assert.deepEqual(ms, { b: 2332, c: 583, a: 583 + 2332 }, 'Satay was not picked, so it stays with Aisha who paid');
+  assert.equal(Settle.itemsCalc(meal).unclaimed.items.map((i) => i.name).join(), 'Satay');
   console.log('passed: trip settle-up maths');
 }
 
@@ -454,6 +461,42 @@ async function tripSuite(name, call) {
   console.log('passed: trips, ' + name);
 }
 
+// A trip meal split by items: everyone picks their own dishes; whoever added or paid can pick for others.
+async function tripItemsSuite(name, call) {
+  const Settle = require('./public/settle.js');
+  const a = (await call('POST', '/api/trips', { title: 'Ipoh day trip', name: 'Aisha' })).body;
+  const B = (await call('POST', `/api/trips/${a.id}/join`, { name: 'Ben' })).body;
+  const C = (await call('POST', `/api/trips/${a.id}/join`, { name: 'Chen' })).body;
+  const items = [{ name: 'Nasi lemak', qty: 1, price: 2000 }, { name: 'Teh tarik', qty: 2, price: 1000 }, { name: 'Satay', qty: 1, price: 2000 }];
+  let r = await call('POST', `/api/trips/${a.id}/expenses`, { title: 'Lunch', paidBy: B.memberId, mode: 'items', items, service: 500, sst: 330, amount: 1 }, B.token);
+  assert.equal(r.status, 200);
+  let e = r.body.trip.expenses[0];
+  assert.deepEqual([e.mode, e.amount, e.items.map((i) => i.id + ':' + i.price).join()], ['items', 5830, 'i1:2000,i2:1000,i3:2000'], 'the dishes and charges make the amount');
+  const pick = (who, ids, memberId) => call('PUT', `/api/trips/${a.id}/expenses/${e.id}/picks`, { itemIds: ids, memberId }, who);
+  await pick(C.token, ['i2']);
+  assert.equal((await pick(C.token, ['i1'], a.memberId)).status, 403, 'Chen cannot pick for Aisha');
+  await pick(B.token, ['i1'], a.memberId);
+  r = await pick(B.token, ['i2', 'zz']);
+  e = r.body.trip.expenses[0];
+  assert.deepEqual(e.picks, { [C.memberId]: ['i2'], [a.memberId]: ['i1'], [B.memberId]: ['i2'] });
+  let sh = Settle.shares(e);
+  assert.equal(Object.values(sh).reduce((x, y) => x + y, 0), 5830);
+  assert.deepEqual([sh[a.memberId], sh[B.memberId], sh[C.memberId]], [2332, 583 + 2332, 583], 'the unpicked satay stays with Ben, who paid');
+  assert.equal((await call('PUT', `/api/trips/${a.id}/expenses/${e.id}/picks`, { itemIds: ['i1'] })).status, 401);
+
+  // Editing the dishes keeps picks on dishes that stay; a removed dish comes off everyone.
+  r = await call('PUT', `/api/trips/${a.id}/expenses/${e.id}`, { title: 'Lunch', paidBy: B.memberId, mode: 'items', items: [{ id: 'i1', name: 'Nasi lemak ayam', qty: 1, price: 2200 }, { id: 'i3', name: 'Satay', qty: 1, price: 2000 }], service: 420, sst: 0 }, B.token);
+  e = r.body.trip.expenses[0];
+  assert.deepEqual([e.amount, e.items.map((i) => i.id + ':' + i.name).join(), JSON.stringify(e.picks)], [4620, 'i1:Nasi lemak ayam,i3:Satay', JSON.stringify({ [a.memberId]: ['i1'] })]);
+  // Switching to an equal split drops the dishes.
+  r = await call('PUT', `/api/trips/${a.id}/expenses/${e.id}`, { title: 'Lunch', paidBy: B.memberId, mode: 'equal', amount: 4620, among: [a.memberId, B.memberId] }, B.token);
+  e = r.body.trip.expenses[0];
+  assert.deepEqual([e.mode, e.items, e.picks], ['equal', undefined, undefined]);
+  assert.equal((await pick(B.token, ['i1'])).status, 400);
+  await call('DELETE', `/api/trips/${a.id}`, null, a.token);
+  console.log('passed: trip items, ' + name);
+}
+
 (async () => {
   receiptParsing();
   tripMaths();
@@ -467,6 +510,7 @@ async function tripSuite(name, call) {
   };
   await suite('self-hosted server (SQLite)', viaHttp);
   await tripSuite('self-hosted server (SQLite)', viaHttp);
+  await tripItemsSuite('self-hosted server (SQLite)', viaHttp);
 
   const fb = fakeBlobs();
   const handle = createApi({ store: createBlobStore(fb), trips: createBlobStore(fb, 'trip/') });
@@ -477,6 +521,7 @@ async function tripSuite(name, call) {
   };
   await suite('Netlify function (Blobs stand-in)', viaFunction);
   await tripSuite('Netlify function (Blobs stand-in)', viaFunction);
+  await tripItemsSuite('Netlify function (Blobs stand-in)', viaFunction);
 
   // The real @netlify/blobs client against its own local server, if `npm install` has been run.
   let blobsPkg, blobsServerPkg;

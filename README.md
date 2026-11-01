@@ -73,8 +73,10 @@ Claude scans are limited to 15 per hour per visitor to protect your bill. Scans 
   "Edit items" to change the name, date, dishes or charges. Ticks stay on the dishes that are kept, a removed
   dish comes off whoever ticked it, and payments already confirmed keep their amount.
 - **Trips and events.** "New trip" on the home page is for a trip or event where different people pay along
-  the way. Everyone joins from the trip link, adds what they paid (a receipt photo fills in the total), and picks
-  who shares it, equally or by exact amounts. The trip page shows each person's balance and a short list of
+  the way. Everyone joins from the trip link, adds what they paid, and picks how it is split: equally,
+  by exact amounts, or by items. A receipt photo fills in the total, and for a meal it also reads the dishes, so
+  everyone then taps what they ate (like a bill); service charge and SST follow each person's dishes, and dishes
+  nobody picks stay with whoever paid. The trip page shows each person's balance and a short list of
   transfers that settles everyone up. Each person adds their own DuitNow QR; whoever pays uploads a slip or marks
   cash, and the person paid confirms. Only whoever added an expense, or who made the trip, can change it.
 - **Summary picture.** "Share summary" on a bill makes a picture of who ate what, how much each person owes and

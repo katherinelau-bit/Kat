@@ -9,7 +9,7 @@ function ago(ms) { var m = Math.round((Date.now() - ms) / 60000); if (m < 1) ret
 function hue(id) { var h = 0; for (var i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360; return h; }
 
 var S = { cfg: { scan: false }, store: loadStore(), view: 'home', billId: null, bill: null, home: [], homeLoaded: false, err: '',
-  draft: null, acting: null, modal: null, busy: 0, chain: Promise.resolve(), scanning: false, creating: false, slipChecks: {}, slipRun: false, tripId: null, trip: null, edraft: null, payTo: null, payAmt: 0, homeTrips: [], confirmDel: null, toastT: null, toastMsg: '' };
+  draft: null, acting: null, modal: null, busy: 0, chain: Promise.resolve(), scanning: false, creating: false, slipChecks: {}, slipRun: false, tripId: null, trip: null, edraft: null, pickEid: null, pickAs: null, payTo: null, payAmt: 0, homeTrips: [], confirmDel: null, toastT: null, toastMsg: '' };
 
 function loadStore() { try { var o = JSON.parse(localStorage.getItem('bcl.v1')); if (o && o.bills) { o.trips = o.trips || {}; return o; } } catch (e) {} return { bills: {}, trips: {}, name: '' }; }
 function saveStore() { try { localStorage.setItem('bcl.v1', JSON.stringify(S.store)); } catch (e) {} }
@@ -80,6 +80,9 @@ async function route(scroll) {
   if ((m = p.match(/^\/b\/([a-z0-9]+)\/edit$/))) { S.view = 'new'; S.billId = m[1]; S.draft = null; render(); await startEdit(m[1]); return; }
   if (p === '/t/new') { S.view = 'tripnew'; render(); return; }
   if ((m = p.match(/^\/t\/([a-z0-9]+)\/(add|e\/(e\d+))$/))) { S.view = 'expense'; S.tripId = m[1]; S.edraft = null; render(); await startExpense(m[1], m[3] || null); return; }
+  if ((m = p.match(/^\/t\/([a-z0-9]+)\/x\/(e\d+)$/))) {
+    S.view = 'picks'; S.pickEid = m[2]; if (S.tripId !== m[1]) { S.trip = null; S.pickAs = null; } S.tripId = m[1]; render(); await loadTrip(m[1]); return;
+  }
   if ((m = p.match(/^\/t\/([a-z0-9]+)$/))) { S.view = 'trip'; if (S.tripId !== m[1]) { S.trip = null; S.payTo = null; } S.tripId = m[1]; render(); await loadTrip(m[1]); return; }
   if ((m = p.match(/^\/b\/([a-z0-9]+)$/))) { S.view = 'bill'; S.billId = m[1]; S.bill = null; render(); await loadBill(m[1]); return; }
   S.view = 'home'; await loadHome();
@@ -325,7 +328,7 @@ function viewNew() {
 }
 function render() {
   var a = $('#app'); if (!a) return;
-  a.innerHTML = S.view === 'new' ? viewNew() : S.view === 'bill' ? viewBill() : S.view === 'trip' ? viewTrip() : S.view === 'tripnew' ? viewTripNew() : S.view === 'expense' ? viewExpense() : viewHome();
+  a.innerHTML = S.view === 'new' ? viewNew() : S.view === 'bill' ? viewBill() : S.view === 'trip' ? viewTrip() : S.view === 'tripnew' ? viewTripNew() : S.view === 'expense' ? viewExpense() : S.view === 'picks' ? viewPicks() : viewHome();
   if (S.view === 'new') saveDraft();
   if (S.view === 'bill' && S.bill) checkSlips(S.bill);
 }
@@ -372,7 +375,7 @@ async function loadTrip(id) {
   render();
 }
 async function refreshTrip() {
-  if (S.view !== 'trip' || !S.tripId) return;
+  if ((S.view !== 'trip' && S.view !== 'picks') || !S.tripId) return;
   try { var j = await api('GET', '/api/trips/' + S.tripId, null, ttok(S.tripId)); if (!S.busy) { S.trip = j.trip; render(); } } catch (e) {}
 }
 
@@ -395,6 +398,7 @@ async function createTrip() {
 }
 
 function splitText(t, e) {
+  if (e.mode === 'items') { var n = Object.keys(e.picks || {}).length; return 'Split by items · ' + (n ? n + (n === 1 ? ' person has' : ' people have') + ' picked' : 'nobody has picked yet'); }
   var names = e.among.map(function (id) { return tnm(t, id); });
   if (e.among.length === t.members.length && e.mode === 'equal') return 'Split equally among everyone';
   return (e.mode === 'exact' ? 'Split by amount: ' : 'Split equally: ') + names.join(', ');
@@ -468,7 +472,7 @@ function tripExpensesHtml(t, me) {
   t.expenses.slice().reverse().forEach(function (e) {
     var sh = Settle.shares(e), mine = me ? sh[me.id] || 0 : 0, canEdit = me && (me.isOwner || e.addedBy === me.id);
     h += '<div class="person">' + tav(t, e.paidBy) + '<div class="grow"><div><b>' + esc(e.title) + '</b></div><div class="small muted">' + esc(e.date || '') + ' · paid by ' + esc(me && e.paidBy === me.id ? 'you' : tnm(t, e.paidBy)) + '</div><div class="small muted">' + esc(splitText(t, e)) + (mine ? ' · your share <span class="mono">' + fmt(mine) + '</span>' : '') + '</div></div><span class="mono">' + fmt(e.amount) + '</span>' +
-      ((e.hasReceipt || canEdit) ? '<div class="acts" style="width:100%;padding-left:38px">' + (e.hasReceipt ? '<button class="btn small" data-act="treceipt" data-eid="' + e.id + '">Receipt</button>' : '') + (canEdit ? '<button class="btn small" data-nav="/t/' + t.id + '/e/' + e.id + '">Edit</button>' : '') + '</div>' : '') + '</div>';
+      ((e.hasReceipt || canEdit || e.mode === 'items') ? '<div class="acts" style="width:100%;padding-left:38px">' + (e.mode === 'items' && me ? '<button class="btn small primary" data-nav="/t/' + t.id + '/x/' + e.id + '">' + (mine ? 'Change what you ate' : 'Choose what you ate') + '</button>' : '') + (e.hasReceipt ? '<button class="btn small" data-act="treceipt" data-eid="' + e.id + '">Receipt</button>' : '') + (canEdit ? '<button class="btn small" data-nav="/t/' + t.id + '/e/' + e.id + '">Edit</button>' : '') + '</div>' : '') + '</div>';
   });
   return h + '</div>';
 }
@@ -486,12 +490,22 @@ function tripPeopleHtml(t, me, bal) {
 function newExpense(t) {
   var me = tmyId(t), among = {};
   t.members.forEach(function (m) { among[m.id] = true; });
-  return { tripId: t.id, eid: null, title: '', date: new Date().toISOString().slice(0, 10), paidBy: me, amount: '', mode: 'equal', among: among, shares: {}, receipt: '', scanNote: '', scanning: false };
+  return { tripId: t.id, eid: null, title: '', date: new Date().toISOString().slice(0, 10), paidBy: me, amount: '', mode: 'equal', among: among, shares: {},
+    items: [{ name: '', qty: '1', price: '' }], service: '', sst: '', rounding: '', receipt: '', scanNote: '', scanning: false };
 }
 function expenseFrom(t, e) {
   var among = {}, shares = {};
   e.among.forEach(function (id) { among[id] = true; if (e.mode === 'exact') shares[id] = fixed(e.shares[id] || 0); });
-  return { tripId: t.id, eid: e.id, title: e.title, date: e.date, paidBy: e.paidBy, amount: fixed(e.amount), mode: e.mode, among: among, shares: shares, receipt: '', hadReceipt: e.hasReceipt, scanNote: '', scanning: false };
+  if (e.mode === 'items') t.members.forEach(function (m) { among[m.id] = true; });
+  var items = e.mode === 'items' ? e.items.map(function (i) { return { id: i.id, name: i.name, qty: String(i.qty), price: fixed(Math.round(i.price / i.qty)), line: i.price }; }) : [{ name: '', qty: '1', price: '' }];
+  return { tripId: t.id, eid: e.id, title: e.title, date: e.date, paidBy: e.paidBy, amount: fixed(e.amount), mode: e.mode, among: among, shares: shares,
+    items: items, service: e.service ? fixed(e.service) : '', sst: e.sst ? fixed(e.sst) : '', rounding: e.rounding ? fixed(e.rounding) : '', receipt: '', hadReceipt: e.hasReceipt, scanNote: '', scanning: false };
+}
+// Split by items: the dishes plus charges are the total.
+function edTotal(d) {
+  if (d.mode !== 'items') return toC(d.amount);
+  var s = 0; d.items.forEach(function (i) { s += lineCents(i); });
+  return s + toC(d.service) + toC(d.sst) + toC(d.rounding);
 }
 function edAmong(d) { return Object.keys(d.among).filter(function (id) { return d.among[id]; }); }
 function edRemain(d) { var s = 0; edAmong(d).forEach(function (id) { s += toC(d.shares[id]); }); return toC(d.amount) - s; }
@@ -504,11 +518,22 @@ function viewExpense() {
   var t = S.trip, d = S.edraft;
   if (!t || !d) return topbar() + '<div class="card empty"><h3>Opening trip…</h3></div>';
   var h = topbar() + '<button class="btn ghost" data-nav="/t/' + t.id + '">← ' + esc(t.title) + '</button><h2>' + (d.eid ? 'Edit expense' : 'Add expense') + '</h2>';
-  h += '<div class="card"><h3>Receipt (optional)</h3><div class="drop"><div class="row">' + (d.receipt ? '<img class="thumb" src="' + d.receipt + '" alt="Receipt photo">' : '') + '<div><b>' + (d.receipt ? 'Receipt attached' : d.hadReceipt ? 'Receipt already attached' : 'Add a photo of the receipt') + '</b><div class="small muted">The total, shop name and date are read for you. Everyone in the trip can view the photo.</div></div></div><button class="btn" data-act="epick"' + (d.scanning ? ' disabled' : '') + '>' + (d.scanning ? 'Reading…' : d.receipt ? 'Change photo' : 'Choose photo') + '</button></div>' + (d.scanNote ? '<p class="small" style="color:var(--warn)">' + esc(d.scanNote) + '</p>' : '') + '</div>';
+  h += '<div class="card"><h3>Receipt (optional)</h3><div class="drop"><div class="row">' + (d.receipt ? '<img class="thumb" src="' + d.receipt + '" alt="Receipt photo">' : '') + '<div><b>' + (d.receipt ? 'Receipt attached' : d.hadReceipt ? 'Receipt already attached' : 'Add a photo of the receipt') + '</b><div class="small muted">The dishes, total, shop name and date are read for you. Everyone in the trip can view the photo.</div></div></div><button class="btn" data-act="epick"' + (d.scanning ? ' disabled' : '') + '>' + (d.scanning ? 'Reading…' : d.receipt ? 'Change photo' : 'Choose photo') + '</button></div>' + (d.scanNote ? '<p class="small" style="color:var(--warn)">' + esc(d.scanNote) + '</p>' : '') + '</div>';
   h += '<div class="card"><h3>What and who paid</h3><div class="two"><div class="field"><label for="e-title">What was it</label><input type="text" id="e-title" data-ef="title" maxlength="80" value="' + esc(d.title) + '" placeholder="e.g. Hotel, dinner, petrol"></div><div class="field"><label for="e-date">Date</label><input type="date" id="e-date" data-ef="date" value="' + esc(d.date) + '"></div>' +
-    '<div class="field"><label for="e-amount">Total (RM)</label><input type="number" step="0.01" min="0" inputmode="decimal" id="e-amount" data-ef="amount" value="' + esc(d.amount) + '" placeholder="0.00"></div>' +
+    '<div class="field"><label for="e-amount">Total (RM)</label><input type="number" step="0.01" min="0" inputmode="decimal" id="e-amount" data-ef="amount" value="' + esc(d.mode === 'items' ? fixed(edTotal(d)) : d.amount) + '" placeholder="0.00"' + (d.mode === 'items' ? ' readonly title="Worked out from the items below"' : '') + '></div>' +
     '<div class="field"><label for="e-paid">Paid by</label><select id="e-paid" data-ef="paidBy">' + t.members.map(function (m) { return '<option value="' + m.id + '"' + (m.id === d.paidBy ? ' selected' : '') + '>' + esc(m.name) + (m.id === tmyId(t) ? ' (you)' : '') + '</option>'; }).join('') + '</select></div></div></div>';
-  h += '<div class="card"><h3>Split between</h3><div class="chips"><button class="btn small' + (d.mode === 'equal' ? ' primary' : '') + '" data-act="emode" data-mode="equal">Equally</button><button class="btn small' + (d.mode === 'exact' ? ' primary' : '') + '" data-act="emode" data-mode="exact">By exact amounts</button><button class="btn small" data-act="eall">Everyone</button><button class="btn small" data-act="enone">No one</button></div>';
+  var modeBtn = function (m, label) { return '<button class="btn small' + (d.mode === m ? ' primary' : '') + '" data-act="emode" data-mode="' + m + '">' + label + '</button>'; };
+  h += '<div class="card"><h3>Split</h3><div class="chips">' + modeBtn('items', 'By items') + modeBtn('equal', 'Equally') + modeBtn('exact', 'By exact amounts') + '</div>';
+  if (d.mode === 'items') {
+    // The dishes (from the receipt, or typed), then charges. After saving, everyone ticks what they ate.
+    h += '<div class="items"><div class="irow h"><span>Item</span><span>Qty</span><span>Each (RM)</span><span style="text-align:right">Total</span><span></span></div>';
+    d.items.forEach(function (it, i) { h += '<div class="irow"><input type="text" aria-label="Item name" data-ei="' + i + '" data-ek="name" value="' + esc(it.name) + '" placeholder="Item"><input type="number" min="1" aria-label="Quantity" data-ei="' + i + '" data-ek="qty" value="' + esc(it.qty) + '"><input type="number" step="0.01" min="0" inputmode="decimal" aria-label="Price of one" data-ei="' + i + '" data-ek="price" value="' + esc(it.price) + '" placeholder="0.00"><span class="mono small" data-eline="' + i + '">' + fmt(lineCents(it)) + '</span><button class="x" data-act="ermi" data-i="' + i + '" aria-label="Remove item">×</button></div>'; });
+    h += '</div><div><button class="btn small" data-act="eaddi">Add item</button></div>';
+    h += '<div class="two"><div class="field"><label for="e-svc">Service charge (RM)</label><input type="number" step="0.01" id="e-svc" data-ef="service" value="' + esc(d.service) + '" placeholder="0.00"></div><div class="field"><label for="e-sst">SST (RM)</label><input type="number" step="0.01" id="e-sst" data-ef="sst" value="' + esc(d.sst) + '" placeholder="0.00"></div><div class="field"><label for="e-rnd">Rounding (RM)</label><input type="number" step="0.01" id="e-rnd" data-ef="rounding" value="' + esc(d.rounding) + '" placeholder="0.00"></div></div>';
+    h += '<div class="chips"><button class="btn small" data-act="esvc10">Service 10%</button><button class="btn small" data-act="esst6">SST 6%</button><button class="btn small" data-act="esst8">SST 8%</button></div>';
+    h += '<p class="small" id="eTotal"><b>Total ' + fmt(edTotal(d)) + '</b></p><p class="small muted">After saving, everyone in the trip taps the dishes they ate. Service charge and SST follow each person\'s dishes, and dishes nobody picks stay with whoever paid.</p></div>';
+  } else {
+  h += '<div class="chips"><button class="btn small" data-act="eall">Everyone</button><button class="btn small" data-act="enone">No one</button></div>';
   h += '<div class="receipt">';
   t.members.forEach(function (m) {
     var on = !!d.among[m.id];
@@ -517,6 +542,7 @@ function viewExpense() {
   });
   h += '</div>';
   h += '<p class="small" id="eRemain">' + remainHtml(d) + '</p></div>';
+  }
   h += '<div class="row"><button class="btn primary" data-act="esave">' + (d.eid ? 'Save changes' : 'Add expense') + '</button><button class="btn" data-nav="/t/' + t.id + '">Cancel</button>' + (d.eid ? '<button class="btn" data-act="edelete" style="color:var(--bad)">Delete</button>' : '') + '</div>';
   return h;
 }
@@ -533,15 +559,24 @@ async function startExpense(id, eid) {
   render();
 }
 async function saveExpense() {
-  var d = S.edraft, among = edAmong(d), shares = {};
+  var d = S.edraft, among = edAmong(d), shares = {}, body;
   if (!d.title.trim()) return toast('Say what the expense was');
-  if (toC(d.amount) <= 0) return toast('Enter the total');
-  if (!among.length) return toast('Choose who shares it');
-  if (d.mode === 'exact') { if (edRemain(d) !== 0) return toast('The amounts must add up to the total'); among.forEach(function (id) { shares[id] = toC(d.shares[id]); }); }
-  var body = { title: d.title, date: d.date, paidBy: d.paidBy, amount: toC(d.amount), mode: d.mode, among: among, shares: shares, receipt: d.receipt ? b64(d.receipt) : undefined };
+  if (d.mode === 'items') {
+    var items = d.items.filter(function (i) { return lineCents(i) > 0; }).map(function (i) { return { id: i.id, name: i.name, qty: Math.max(1, parseInt(i.qty, 10) || 1), price: lineCents(i) }; });
+    if (!items.length) return toast('Add at least one item with a price');
+    body = { title: d.title, date: d.date, paidBy: d.paidBy, mode: 'items', items: items, service: toC(d.service), sst: toC(d.sst), rounding: toC(d.rounding), receipt: d.receipt ? b64(d.receipt) : undefined };
+  } else {
+    if (toC(d.amount) <= 0) return toast('Enter the total');
+    if (!among.length) return toast('Choose who shares it');
+    if (d.mode === 'exact') { if (edRemain(d) !== 0) return toast('The amounts must add up to the total'); among.forEach(function (id) { shares[id] = toC(d.shares[id]); }); }
+    body = { title: d.title, date: d.date, paidBy: d.paidBy, amount: toC(d.amount), mode: d.mode, among: among, shares: shares, receipt: d.receipt ? b64(d.receipt) : undefined };
+  }
   try {
     var j = await api(d.eid ? 'PUT' : 'POST', '/api/trips/' + d.tripId + '/expenses' + (d.eid ? '/' + d.eid : ''), body, ttok(d.tripId));
-    setTrip(j); var id = d.tripId; S.edraft = null; toast(d.eid ? 'Expense updated' : 'Expense added'); nav('/t/' + id);
+    setTrip(j); var id = d.tripId; S.edraft = null; toast(d.eid ? 'Expense updated' : 'Expense added');
+    // A new expense split by items opens straight on "choose what you ate".
+    var made = j.expenseId || d.eid;
+    nav(d.mode === 'items' && made ? '/t/' + id + '/x/' + made : '/t/' + id);
   } catch (e) { toast(e.message); }
 }
 async function scanExpense(f) {
@@ -554,7 +589,14 @@ async function scanExpense(f) {
     d.amount = fixed(total);
     if (!d.title && r.merchant) d.title = r.merchant;
     if (r.date) d.date = r.date;
-    d.scanNote = 'Read a total of ' + fmt(total) + (r.merchant ? ' at ' + r.merchant : '') + '. Please check it against the receipt.';
+    if (r.items.length) {
+      // Dishes found: split by items, so everyone can pick what they ate.
+      d.mode = 'items';
+      d.items = r.items.map(function (i) { return { name: i.name, qty: String(i.qty), price: fixed(i.each), line: i.line }; });
+      d.service = r.service ? fixed(r.service) : ''; d.sst = r.sst ? fixed(r.sst) : ''; d.rounding = r.rounding ? fixed(r.rounding) : '';
+      var gap = r.total ? r.total - edTotal(d) : 0;
+      d.scanNote = 'Read ' + r.items.length + ' item' + (r.items.length > 1 ? 's' : '') + (r.merchant ? ' at ' + r.merchant : '') + (Math.abs(gap) > 1 ? '. They come to ' + fmt(edTotal(d)) + ' but the receipt says ' + fmt(r.total) + ', so check the items.' : ', matching the total of ' + fmt(edTotal(d)) + '.') + ' Please check them against the receipt.';
+    } else d.scanNote = 'Read a total of ' + fmt(total) + (r.merchant ? ' at ' + r.merchant : '') + '. Please check it against the receipt.';
   } catch (e) { d.scanNote = 'Could not read the total. Type it in.'; }
   d.scanning = false; render();
 }
@@ -599,25 +641,85 @@ function tripAction(act, el) {
       if (S.confirmDel !== t.id) { S.confirmDel = t.id; toast('Tap Delete trip again to confirm'); setTimeout(function () { S.confirmDel = null; }, 4000); return true; }
       S.confirmDel = null; tapi('DELETE', '').then(function () { delete S.store.trips[t.id]; saveStore(); nav('/'); }).catch(fail); return true;
     case 'epick': $('#fileReceipt').click(); return true;
-    case 'emode': d.mode = el.getAttribute('data-mode'); render(); return true;
+    case 'emode': if (d.mode === 'items' && edItemsSum(d)) d.amount = fixed(edTotal(d)); d.mode = el.getAttribute('data-mode'); render(); return true;
     case 'eall': t.members.forEach(function (m) { d.among[m.id] = true; }); render(); return true;
     case 'etoggle': d.among[uid] = !d.among[uid]; render(); return true;
     case 'enone': d.among = {}; render(); return true;
     case 'esave': saveExpense(); return true;
+    case 'eaddi': d.items.push({ name: '', qty: '1', price: '' }); render(); return true;
+    case 'ermi': if (d.items.length > 1) { d.items.splice(+el.getAttribute('data-i'), 1); render(); } return true;
+    case 'esvc10': d.service = fixed(Math.round(edItemsSum(d) * 0.10)); render(); return true;
+    case 'esst6': case 'esst8': d.sst = fixed(Math.round((edItemsSum(d) + toC(d.service)) * (act === 'esst6' ? 0.06 : 0.08))); render(); return true;
+    case 'xas': S.pickAs = uid; render(); return true;
+    case 'xpick': pickDish(el.getAttribute('data-id')); return true;
     case 'edelete':
       if (S.confirmDel !== d.eid) { S.confirmDel = d.eid; toast('Tap Delete again to confirm'); setTimeout(function () { S.confirmDel = null; }, 4000); return true; }
       S.confirmDel = null; api('DELETE', '/api/trips/' + d.tripId + '/expenses/' + d.eid, null, ttok(d.tripId)).then(function (j) { setTrip(j); var id = d.tripId; S.edraft = null; toast('Expense deleted'); nav('/t/' + id); }).catch(fail); return true;
   }
   return false;
 }
+function edItemsSum(d) { var s = 0; d.items.forEach(function (i) { s += lineCents(i); }); return s; }
 function expenseInput(t) {
   var d = S.edraft; if (!d) return false;
-  if (t.hasAttribute('data-ef')) d[t.getAttribute('data-ef')] = t.value;
+  if (t.hasAttribute('data-ei')) {
+    var ix = +t.getAttribute('data-ei'), it = d.items[ix], k = t.getAttribute('data-ek'); it[k] = t.value;
+    if (k !== 'name') delete it.line;
+    var ce = document.querySelector('[data-eline="' + ix + '"]'); if (ce) ce.textContent = fmt(lineCents(it));
+  } else if (t.hasAttribute('data-ef')) d[t.getAttribute('data-ef')] = t.value;
   else if (t.hasAttribute('data-share')) d.shares[t.getAttribute('data-share')] = t.value;
   else if (t.hasAttribute('data-among')) { d.among[t.getAttribute('data-among')] = t.checked; render(); return true; }
   else return false;
   var el = $('#eRemain'); if (el) el.innerHTML = remainHtml(d);
+  if (d.mode === 'items') { var tt = $('#eTotal'), am = $('#e-amount'); if (tt) tt.innerHTML = '<b>Total ' + fmt(edTotal(d)) + '</b>'; if (am) am.value = fixed(edTotal(d)); }
   return true;
+}
+
+// "Choose what you ate" on an expense split by items: like a bill's dish list. Whoever added or paid for it,
+// or made the trip, can also tick for others (for friends who have not opened the link).
+function pickExpense() { var t = S.trip; return t && t.expenses.filter(function (x) { return x.id === S.pickEid; })[0]; }
+function canPickFor(t, me, e) { return me && (me.isOwner || e.addedBy === me.id || e.paidBy === me.id); }
+function viewPicks() {
+  var t = S.trip, e = pickExpense();
+  if (!t) return topbar() + '<div class="card empty"><h3>Opening trip…</h3></div>';
+  if (!e || e.mode !== 'items') return topbar() + '<div class="card empty"><h3>This expense is not split by items.</h3><button class="btn primary" data-nav="/t/' + t.id + '">Back to the trip</button></div>';
+  var meId = tmyId(t), me = meId ? tmem(t, meId) : null;
+  if (!me) return topbar() + '<div class="card empty"><h3>Join the trip first</h3><button class="btn primary" data-nav="/t/' + t.id + '">Open the trip</button></div>';
+  var c = Settle.itemsCalc(e), others = canPickFor(t, me, e), ac = others && S.pickAs && tmem(t, S.pickAs) ? S.pickAs : meId;
+  var picks = (e.picks && e.picks[ac]) || [], my = c.per[ac];
+  var h = topbar() + '<button class="btn ghost" data-nav="/t/' + t.id + '">← ' + esc(t.title) + '</button>';
+  h += '<div class="row between" style="align-items:flex-start"><div class="grow"><h2>' + esc(e.title) + '</h2><div class="small muted">' + esc(e.date || '') + ' · paid by ' + esc(e.paidBy === meId ? 'you' : tnm(t, e.paidBy)) + '</div></div><div class="mono" style="font-size:20px">' + fmt(e.amount) + '</div></div>';
+  if (others) h += '<div class="card"><h3>Picking for</h3><div class="chips">' + t.members.map(function (m) { return '<button class="btn small' + (m.id === ac ? ' primary' : '') + '" data-act="xas" data-uid="' + m.id + '">' + esc(m.id === meId ? 'You' : m.name) + '</button>'; }).join('') + '</div><p class="small muted">Tap a name, then tap the dishes that person ate. A dish picked by 2 or more people is split equally.</p></div>';
+  h += '<div class="card"><div class="row between"><h3>' + (ac === meId ? 'Tap what you ate' : 'Tap what ' + esc(tnm(t, ac)) + ' ate') + '</h3>' + (e.hasReceipt ? '<button class="btn small" data-act="treceipt" data-eid="' + e.id + '">View receipt</button>' : '') + '</div><div class="receipt">';
+  e.items.forEach(function (it) {
+    var who = Object.keys(e.picks || {}).filter(function (id) { return e.picks[id].indexOf(it.id) > -1; });
+    var on = picks.indexOf(it.id) > -1, part = '';
+    if (on && my) { var l = my.lines.filter(function (x) { return x.id === it.id; })[0]; if (l && l.n > 1) part = '<span class="sub">part ' + fmt(l.cents) + ' (÷' + l.n + ')</span>'; }
+    var unit = it.qty > 1 ? '<span class="sub">' + it.qty + ' × ' + fmt(Math.round(it.price / it.qty)) + '</span>' : '';
+    h += '<button class="ln' + (on ? ' on' : '') + '" data-act="xpick" data-id="' + it.id + '" aria-pressed="' + on + '"><span class="chk">' + (on ? '✓' : '') + '</span><span class="nm">' + esc(it.name) + unit + '</span><span class="avs">' + who.slice(0, 4).map(function (id) { return tav(t, id); }).join('') + '</span><span class="pr">' + fmt(it.price) + part + '</span></button>';
+  });
+  h += receiptTotals(e, c) + '</div>';
+  if (c.unclaimed.sub > 0) h += '<p class="small muted">' + fmt(c.unclaimed.total) + ' of dishes nobody picked stays with ' + esc(tnm(t, e.paidBy)) + ', who paid.</p>';
+  h += '</div>';
+  if (my) {
+    h += '<div class="card share"><h3>' + (ac === meId ? 'Your share' : esc(tnm(t, ac)) + '\'s share') + '</h3><div class="receipt">';
+    my.lines.forEach(function (l) { h += '<div class="chg" style="color:var(--ink)"><span>' + esc(l.name) + (l.n > 1 ? ' (÷' + l.n + ')' : '') + '</span><span>' + fmt(l.cents) + '</span></div>'; });
+    if (my.svc) h += '<div class="chg"><span>Service charge</span><span>' + fmt(my.svc) + '</span></div>';
+    if (my.sst) h += '<div class="chg"><span>SST</span><span>' + fmt(my.sst) + '</span></div>';
+    if (my.rnd) h += '<div class="chg"><span>Rounding</span><span>' + fmt(my.rnd) + '</span></div>';
+    h += '<div class="chg tot"><span>Total</span><span class="big" style="font-size:22px">' + fmt(my.total) + '</span></div></div><p class="small muted">This is added to the trip. You pay it when settling up at the end, not now.</p></div>';
+  } else if (ac === meId) h += '<div class="card"><p class="muted">Tap the dishes you ate above. Your share, with service charge and SST, appears here and is added to the trip.</p></div>';
+  h += '<div class="row" style="flex-wrap:wrap"><button class="btn primary" data-nav="/t/' + t.id + '">Done</button>' + (me.isOwner || e.addedBy === meId ? '<button class="btn small" data-nav="/t/' + t.id + '/e/' + e.id + '">Edit items</button>' : '') + '</div>';
+  return h;
+}
+function pickDish(itemId) {
+  var t = S.trip, e = pickExpense(), meId = tmyId(t); if (!e || !meId) return;
+  var ac = canPickFor(t, tmem(t, meId), e) && S.pickAs && tmem(t, S.pickAs) ? S.pickAs : meId;
+  e.picks = e.picks || {};
+  var arr = (e.picks[ac] || []).slice(), ix = arr.indexOf(itemId);
+  if (ix > -1) arr.splice(ix, 1); else arr.push(itemId);
+  if (arr.length) e.picks[ac] = arr; else delete e.picks[ac];
+  render();
+  queueWrite(function () { return tapi('PUT', '/expenses/' + e.id + '/picks', { memberId: ac, itemIds: arr }).then(function (j) { if (S.busy === 1) S.trip = j.trip; }); });
 }
 
 /* ---------- summary picture ----------
@@ -1001,7 +1103,7 @@ setInterval(function () {
   var a = document.activeElement, typing = a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA');
   if (document.hidden || S.busy || S.modal || typing) return;
   if (S.view === 'bill') refresh();
-  if (S.view === 'trip' && !S.payTo) refreshTrip();
+  if ((S.view === 'trip' && !S.payTo) || S.view === 'picks') refreshTrip();
 }, 6000);
 
 api('GET', '/api/config').then(function (c) { S.cfg = c; if (S.view === 'new' || S.view === 'bill' || S.view === 'trip') render(); }).catch(function () {});
