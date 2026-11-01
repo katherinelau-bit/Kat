@@ -496,7 +496,7 @@ function expenseFrom(t, e) {
 function edAmong(d) { return Object.keys(d.among).filter(function (id) { return d.among[id]; }); }
 function edRemain(d) { var s = 0; edAmong(d).forEach(function (id) { s += toC(d.shares[id]); }); return toC(d.amount) - s; }
 function remainHtml(d) {
-  if (d.mode !== 'exact') { var n = edAmong(d).length; return n ? fmt(Math.floor(toC(d.amount) / n)) + ' each (' + n + ' people)' : 'Choose who shares it'; }
+  if (d.mode !== 'exact') { var n = edAmong(d).length; return n ? fmt(Math.floor(toC(d.amount) / n)) + ' each (' + n + (n === 1 ? ' person)' : ' people)') : 'Choose who shares it'; }
   var r = edRemain(d);
   return r === 0 ? '<span style="color:var(--good)">Adds up to the total</span>' : '<span style="color:var(--warn)">' + fmt(Math.abs(r)) + (r > 0 ? ' still to assign' : ' too much') + '</span>';
 }
@@ -509,10 +509,13 @@ function viewExpense() {
     '<div class="field"><label for="e-amount">Total (RM)</label><input type="number" step="0.01" min="0" inputmode="decimal" id="e-amount" data-ef="amount" value="' + esc(d.amount) + '" placeholder="0.00"></div>' +
     '<div class="field"><label for="e-paid">Paid by</label><select id="e-paid" data-ef="paidBy">' + t.members.map(function (m) { return '<option value="' + m.id + '"' + (m.id === d.paidBy ? ' selected' : '') + '>' + esc(m.name) + (m.id === tmyId(t) ? ' (you)' : '') + '</option>'; }).join('') + '</select></div></div></div>';
   h += '<div class="card"><h3>Split between</h3><div class="chips"><button class="btn small' + (d.mode === 'equal' ? ' primary' : '') + '" data-act="emode" data-mode="equal">Equally</button><button class="btn small' + (d.mode === 'exact' ? ' primary' : '') + '" data-act="emode" data-mode="exact">By exact amounts</button><button class="btn small" data-act="eall">Everyone</button><button class="btn small" data-act="enone">No one</button></div>';
+  h += '<div class="receipt">';
   t.members.forEach(function (m) {
     var on = !!d.among[m.id];
-    h += '<label class="person" style="cursor:pointer"><input type="checkbox" data-among="' + m.id + '"' + (on ? ' checked' : '') + ' style="width:20px;height:20px"><span class="grow"><b>' + esc(m.name) + '</b></span>' + (on && d.mode === 'exact' ? '<input type="number" step="0.01" min="0" inputmode="decimal" aria-label="Amount for ' + esc(m.name) + '" data-share="' + m.id + '" value="' + esc(d.shares[m.id] || '') + '" placeholder="0.00" style="width:110px">' : '') + '</label>';
+    h += '<div class="row" style="gap:8px;align-items:center"><button type="button" class="ln' + (on ? ' on' : '') + '" data-act="etoggle" data-uid="' + m.id + '" aria-pressed="' + on + '" style="flex:1"><span class="chk">' + (on ? '✓' : '') + '</span><span class="nm"><b>' + esc(m.name) + '</b></span></button>' +
+      (on && d.mode === 'exact' ? '<input type="number" step="0.01" min="0" inputmode="decimal" aria-label="Amount for ' + esc(m.name) + '" data-share="' + m.id + '" value="' + esc(d.shares[m.id] || '') + '" placeholder="0.00" style="width:110px;flex:none">' : '') + '</div>';
   });
+  h += '</div>';
   h += '<p class="small" id="eRemain">' + remainHtml(d) + '</p></div>';
   h += '<div class="row"><button class="btn primary" data-act="esave">' + (d.eid ? 'Save changes' : 'Add expense') + '</button><button class="btn" data-nav="/t/' + t.id + '">Cancel</button>' + (d.eid ? '<button class="btn" data-act="edelete" style="color:var(--bad)">Delete</button>' : '') + '</div>';
   return h;
@@ -598,6 +601,7 @@ function tripAction(act, el) {
     case 'epick': $('#fileReceipt').click(); return true;
     case 'emode': d.mode = el.getAttribute('data-mode'); render(); return true;
     case 'eall': t.members.forEach(function (m) { d.among[m.id] = true; }); render(); return true;
+    case 'etoggle': d.among[uid] = !d.among[uid]; render(); return true;
     case 'enone': d.among = {}; render(); return true;
     case 'esave': saveExpense(); return true;
     case 'edelete':
@@ -936,6 +940,9 @@ document.addEventListener('input', function (e) {
   } else return;
   var el = $('#draftTotals'); if (el) el.innerHTML = totalsHtml(d);
   saveDraft();
+});
+document.addEventListener('change', function (e) {
+  if (S.view === 'expense') expenseInput(e.target);
 });
 document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape' && S.modal) closeModal();
