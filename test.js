@@ -311,7 +311,23 @@ async function pushNotifications() {
   const kept = new Map(), st = { getImg: async (k) => kept.get(k) || null, putImg: async (k, v) => { kept.set(k, v); } };
   const key1 = await createPush(st).publicKey(), key2 = await createPush(st).publicKey();
   assert.ok(/^[A-Za-z0-9_-]{80,}$/.test(key1)); assert.equal(key1, key2);
-  console.log('passed: payment notifications');
+
+  // Our own Web Push encryption and VAPID signature, checked against the reference implementation when it is installed.
+  const { encrypt, vapidAuth, generateKeys } = require('./lib/push.js');
+  const nodeCrypto = require('node:crypto');
+  const phone = nodeCrypto.createECDH('prime256v1'); phone.generateKeys();
+  const auth = nodeCrypto.randomBytes(16), msg = JSON.stringify({ title: 'Victor sent RM 25.40' });
+  const box = encrypt({ keys: { p256dh: phone.getPublicKey().toString('base64url'), auth: auth.toString('base64url') } }, msg);
+  let ece = null; try { ece = require('http_ece'); } catch (e) {}
+  if (ece) assert.equal(ece.decrypt(box, { version: 'aes128gcm', privateKey: phone, authSecret: auth.toString('base64url') }).toString(), msg);
+  const vk = generateKeys(), hdr = vapidAuth('https://fcm.googleapis.com/fcm/send/abc', vk, 'https://bei-cin-lah.netlify.app');
+  const [, jwt, k] = hdr.match(/^vapid t=([^,]+), k=(.+)$/), [h64, b64, s64] = jwt.split('.');
+  const claims = JSON.parse(Buffer.from(b64, 'base64url'));
+  assert.deepEqual([k, claims.aud, claims.sub], [vk.publicKey, 'https://fcm.googleapis.com', 'https://bei-cin-lah.netlify.app']);
+  const pub = Buffer.from(vk.publicKey, 'base64url');
+  const pubKey = nodeCrypto.createPublicKey({ format: 'jwk', key: { kty: 'EC', crv: 'P-256', x: pub.subarray(1, 33).toString('base64url'), y: pub.subarray(33).toString('base64url') } });
+  assert.ok(nodeCrypto.verify('sha256', Buffer.from(h64 + '.' + b64), { key: pubKey, dsaEncoding: 'ieee-p1363' }, Buffer.from(s64, 'base64url')));
+  console.log('passed: payment notifications' + (ece ? ' (encryption checked against http_ece)' : ''));
 }
 
 (async () => {

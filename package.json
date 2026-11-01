@@ -11,10 +11,12 @@
   "dependencies": {
     "@netlify/blobs": "^11.1.7",
     "@tesseract.js-data/eng": "^1.0.0",
-    "tesseract.js": "^7.0.0",
-    "web-push": "^3.6.7"
+    "tesseract.js": "^7.0.0"
   },
   "engines": {
     "node": ">=22.13"
+  },
+  "devDependencies": {
+    "http_ece": "^1.2.0"
   }
 }
