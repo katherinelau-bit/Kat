@@ -126,16 +126,22 @@ async function refresh() {
   if (S.view !== 'bill' || !S.billId) return;
   try { var j = await api('GET', '/api/bills/' + S.billId, null, tok(S.billId)); if (!S.busy) { S.bill = j.bill; render(); } } catch (e) {}
 }
+// Loads every bill and trip on this device's list. Only the newest load shows its result (a sync can start a second
+// one while the first is out), and one that fails for a moment keeps its last copy instead of vanishing.
+var homeSeq = 0, homeLast = {};
 async function loadHome() {
-  S.homeLoaded = false; render();
-  var ids = Object.keys(S.store.bills);
-  var res = await Promise.all(ids.map(function (id) {
-    return api('GET', '/api/bills/' + id, null, tok(id)).then(function (j) { return j.bill; }, function (e) { if (e.status === 404) { forget('bills', id); } return null; });
-  }));
-  var tids = Object.keys(S.store.trips);
-  var tres = await Promise.all(tids.map(function (id) {
-    return api('GET', '/api/trips/' + id, null, ttok(id)).then(function (j) { return j.trip; }, function (e) { if (e.status === 404) { forget('trips', id); } return null; });
-  }));
+  var seq = ++homeSeq;
+  if (!S.home.length && !S.homeTrips.length) { S.homeLoaded = false; render(); }
+  var one = function (kind, url, id, token, key) {
+    return api('GET', url + id, null, token).then(function (j) { homeLast[kind + id] = j[key]; return j[key]; },
+      function (e) { if (e.status === 404) { forget(kind, id); delete homeLast[kind + id]; return null; } return homeLast[kind + id] || null; });
+  };
+  var ids = Object.keys(S.store.bills), tids = Object.keys(S.store.trips);
+  var res = await Promise.all(ids.map(function (id) { return one('bills', '/api/bills/', id, tok(id), 'bill'); }));
+  var tres = await Promise.all(tids.map(function (id) { return one('trips', '/api/trips/', id, ttok(id), 'trip'); }));
+  if (seq !== homeSeq) return;
+  // Something removed or left while loading (on this device or a linked one) stays off the list.
+  res = res.filter(function (b) { return b && S.store.bills[b.id]; }); tres = tres.filter(function (t) { return t && S.store.trips[t.id]; });
   saveStore();
   S.homeTrips = tres.filter(Boolean).sort(function (a, z) { return z.createdAt - a.createdAt; });
   S.home = res.filter(Boolean).sort(function (a, z) { return z.createdAt - a.createdAt; });
@@ -259,6 +265,21 @@ function alertsFor(bills) {
   });
   return out;
 }
+// Searching the home list: every word typed must appear in the bill or trip's name, date (written several ways, so
+// "2 nov", "11/2026" and "2026-11-02" all work), who paid, dish names or people.
+var MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+function dateWords(iso) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || ''); if (!m) return '';
+  var y = m[1], mo = +m[2], d = +m[3], name = MONTHS[mo - 1] || '';
+  return [iso, d + ' ' + name + ' ' + y, d + ' ' + name.slice(0, 3) + ' ' + y, m[3] + '/' + m[2] + '/' + y, d + '/' + mo + '/' + y, mo + '/' + y, m[2] + '/' + y].join(' ');
+}
+function billWords(b) { return [b.title, dateWords(b.date), nm(b, b.payerId), (b.items || []).map(function (i) { return i.name; }).join(' '), b.members.map(function (m) { return m.name; }).join(' '), b.currency].join(' '); }
+function tripWords(t) { return [t.title, 'trip', t.members.map(function (m) { return m.name; }).join(' '), (t.expenses || []).map(function (e) { return e.title + ' ' + dateWords(e.date); }).join(' ')].join(' '); }
+// A plain number ("1", "02", "2026") must be a whole number in the text, so "1 nov" does not also find 11 November.
+function found(words) {
+  var w = words.toLowerCase(), nums = ' ' + w.split(/[^a-z0-9]+/).join(' ') + ' ';
+  return S.q.toLowerCase().split(/\s+/).filter(Boolean).every(function (x) { return /^\d+$/.test(x) ? nums.indexOf(' ' + x + ' ') > -1 : w.indexOf(x) > -1; });
+}
 function viewHome() {
   var h = topbar();
   if (!S.homeLoaded) return h + '<div class="card empty"><h3>Loading your bills…</h3></div>';
@@ -276,9 +297,20 @@ function viewHome() {
   }
   h += alertsFor(S.home);
   h += '<div class="tiles"><div class="tile owe"><div class="k">You owe</div><div class="v">' + fmt(owe) + '</div></div><div class="tile owed"><div class="k">Owed to you</div><div class="v">' + fmt(owed) + '</div></div></div>';
+  var bills = S.home, trips = S.homeTrips;
+  S.q = S.q || '';
+  if (S.home.length + S.homeTrips.length > 1) {
+    h += '<div class="search"><input type="search" id="q" data-search value="' + esc(S.q) + '" placeholder="Search by bill name, date or friend" aria-label="Search bills and trips" autocomplete="off" enterkeyhint="search">' + (S.q ? '<button class="btn small" data-act="clearsearch">Clear</button>' : '') + '</div>';
+    if (S.q.trim()) {
+      bills = S.home.filter(function (b) { return found(billWords(b)); }); trips = S.homeTrips.filter(function (t) { return found(tripWords(t)); });
+      h += '<p class="small muted" style="margin:0">' + (bills.length + trips.length ? 'Found ' + bills.length + ' bill' + (bills.length === 1 ? '' : 's') + ' and ' + trips.length + ' trip' + (trips.length === 1 ? '' : 's') + ' for "' + esc(S.q.trim()) + '".' : 'Nothing matches "' + esc(S.q.trim()) + '". Try a shorter word, a month like "nov", or a friend\'s name.') + '</p>';
+    }
+  }
+  var searching = !!S.q.trim();
   h += '<div class="row between"><h2>Your bills</h2><button class="btn primary" data-nav="/new">New bill</button></div>';
-  if (!S.home.length) h += '<div class="card empty"><h3>No bills yet</h3><p class="muted">Add a receipt, send the link to your friends, and let them pick their dishes. Bills you create or join on this phone show up here.</p><button class="btn primary" data-nav="/new">Add a receipt</button></div>';
-  S.home.forEach(function (b) {
+  if (!S.home.length && !searching) h += '<div class="card empty"><h3>No bills yet</h3><p class="muted">Add a receipt, send the link to your friends, and let them pick their dishes. Bills you create or join on this phone show up here.</p><button class="btn primary" data-nav="/new">Add a receipt</button></div>';
+  if (searching && S.home.length && !bills.length) h += '<p class="small muted" style="margin:0">No bills match.</p>';
+  bills.forEach(function (b) {
     var id = myId(b), c = Split.calc(b), me = id ? mem(b, id) : null, pill = '', line = '';
     var others = b.members.filter(function (m) { return !m.isPayer && c.per[m.id]; });
     if (!me) pill = '<span class="pill none">Not joined</span>';
@@ -288,8 +320,9 @@ function viewHome() {
     h += '<button class="bill" data-nav="/b/' + b.id + '"><div class="grow"><div class="t">' + esc(b.title) + '</div><div class="small muted">' + esc(b.date || '') + ' · paid by ' + esc(nm(b, b.payerId)) + ' · ' + fmt(c.total, b.currency) + '</div>' + (line ? '<div class="small mono">' + esc(line) + '</div>' : '') + '</div>' + pill + '</button>';
   });
   h += '<div class="row between"><h2>Your trips</h2><button class="btn primary" data-nav="/t/new">New trip</button></div>';
-  if (!S.homeTrips.length) h += '<div class="card empty"><h3>No trips yet</h3><p class="muted">Going away or holding an event where different people pay? Start a trip, everyone adds what they paid, and the app works out who pays whom at the end.</p></div>';
-  S.homeTrips.forEach(function (tr) {
+  if (!S.homeTrips.length && !searching) h += '<div class="card empty"><h3>No trips yet</h3><p class="muted">Going away or holding an event where different people pay? Start a trip, everyone adds what they paid, and the app works out who pays whom at the end.</p></div>';
+  if (searching && S.homeTrips.length && !trips.length) h += '<p class="small muted" style="margin:0">No trips match.</p>';
+  trips.forEach(function (tr) {
     var id = tmyId(tr), n = id ? tripNet(tr, id) : 0;
     var pill = !id ? '<span class="pill none">Not joined</span>' : n > 0 ? '<span class="pill open">Gets back</span>' : n < 0 ? '<span class="pill unpaid">To pay</span>' : '<span class="pill paid">Settled</span>';
     h += '<button class="bill" data-nav="/t/' + tr.id + '"><div class="grow"><div class="t">' + esc(tr.title) + '</div><div class="small muted">Trip · ' + tr.members.length + (tr.members.length === 1 ? ' person · ' : ' people · ') + fmt(Settle.total(tr)) + '</div>' + (id && n ? '<div class="small mono">' + (n > 0 ? 'You get back ' + fmt(n) : 'You owe ' + fmt(-n)) + '</div>' : '') + '</div>' + pill + '</button>';
@@ -439,9 +472,11 @@ function viewNew() {
 }
 function render() {
   var a = $('#app'); if (!a) return;
+  var q = document.activeElement && document.activeElement.id === 'q' ? document.activeElement : null, at = q ? q.selectionStart : 0;
   var pe = S.view === 'picks' ? pickExpense() : null;
   CUR = Currency.clean(S.view === 'new' && S.draft ? S.draft.currency : S.view === 'bill' && S.bill ? S.bill.currency : S.view === 'expense' && S.edraft ? S.edraft.currency : pe ? pe.currency : 'MYR');
   a.innerHTML = S.view === 'new' ? viewNew() : S.view === 'bill' ? viewBill() : S.view === 'trip' ? viewTrip() : S.view === 'tripnew' ? viewTripNew() : S.view === 'expense' ? viewExpense() : S.view === 'picks' ? viewPicks() : viewHome();
+  if (q && (q = $('#q'))) { q.focus(); try { q.setSelectionRange(at, at); } catch (e) {} }
   if (S.view === 'new') saveDraft();
   if (S.view === 'bill' && S.bill) checkSlips(S.bill);
 }
@@ -1182,6 +1217,7 @@ document.addEventListener('click', function (e) {
     case 'sst6': case 'sst8': d.sst = fixed(Math.round((draftSum(d) + toC(d.service)) * (act === 'sst6' ? 0.06 : 0.08))); render(); break;
     case 'create': createBill(); break;
     case 'linkdev': S.confirmRevoke = false; showLink(); break;
+    case 'clearsearch': S.q = ''; render(); var qi = $('#q'); if (qi) qi.focus(); break;
     case 'unlinkdev': S.store.sync = ''; writeStore(); render(); toast('This device is unlinked. Your bills here stay, and stop syncing.'); break;
     case 'revokesync': revokeSync(); break;
     case 'linkconfirm': confirmLink(); break;
@@ -1192,6 +1228,7 @@ document.addEventListener('click', function (e) {
   }
 });
 document.addEventListener('input', function (e) {
+  if (e.target.hasAttribute('data-search')) { S.q = e.target.value; render(); return; }
   if (S.view === 'expense') { expenseInput(e.target); return; }
   var t = e.target, d = S.draft; if (!d || S.view !== 'new') return;
   if (t.getAttribute('data-f') === 'currency') { d.currency = t.value; d.rate = ''; d.rateNote = ''; saveDraft(); fillRate(d); return; }

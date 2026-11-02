@@ -250,3 +250,8 @@ body{background:url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.or
   :root:not([data-theme="light"]) .bill::after{background-color:#2a2030}
   :root:not([data-theme="light"]) .qr{border-color:#f1f5ff}
   :root:not([data-theme="light"]) .btn.primary{color:#fff}}
+
+/* Search on the home list */
+.search{display:flex;gap:8px;align-items:center}
+.search input[type=search]{flex:1;padding-left:40px;background:var(--surface) url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'20'%20height%3D'20'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'%238a94a6'%20stroke-width%3D'2.5'%20stroke-linecap%3D'round'%3E%3Ccircle%20cx%3D'11'%20cy%3D'11'%20r%3D'7'%2F%3E%3Cpath%20d%3D'M20%2020l-4-4'%2F%3E%3C%2Fsvg%3E") 12px center/20px no-repeat;font-size:16px}
+.search input[type=search]::-webkit-search-cancel-button{display:none}
