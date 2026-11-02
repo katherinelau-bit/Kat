@@ -124,7 +124,7 @@ async function loadHome() {
 /* ---------- drafts (new bill, or editing one) ---------- */
 function newDraft() { return { title: '', date: new Date().toISOString().slice(0, 10), payerName: S.store.name || '', items: [{ name: '', qty: '1', price: '' }], service: '', sst: '', rounding: '', qr: '', receipt: '', scanFile: null, scanTotal: 0, scanNote: '' }; }
 // An unfinished new bill is kept on this phone, so a refresh or a closed tab does not lose a scanned receipt.
-var DRAFT_KEY = 'bcl.draft.v1', DRAFT_FIELDS = ['title', 'date', 'payerName', 'items', 'service', 'sst', 'rounding', 'qr', 'receipt', 'scanTotal', 'scanNote'], draftT = null;
+var DRAFT_KEY = 'bcl.draft.v1', DRAFT_FIELDS = ['title', 'date', 'payerName', 'items', 'service', 'sst', 'rounding', 'qr', 'receipt', 'scanTotal', 'scanNote', 'scanTitle'], draftT = null;
 function saveDraft() {
   var d = S.draft; if (!d || d.editId) return;
   clearTimeout(draftT);
@@ -942,14 +942,15 @@ async function doScan() {
     if (!r.items.length) throw new Error('empty');
     d.items = r.items.map(function (i) { return { name: i.name, qty: String(i.qty), price: fixed(i.each), line: i.line }; });
     d.service = r.service ? fixed(r.service) : ''; d.sst = r.sst ? fixed(r.sst) : ''; d.rounding = r.rounding ? fixed(r.rounding) : '';
-    if (r.merchant && !d.title) d.title = r.merchant;
+    if (r.merchant && (!d.title || d.title === d.scanTitle)) d.title = d.scanTitle = r.merchant;
     if (r.date) d.date = r.date;
     d.scanTotal = r.total;
     var gap = r.total ? r.total - draftTotal(d) : 0;
     // Prices worked out from the receipt's totals (not read directly) are named so the payer can check them.
     var worked = r.filled ? ' ' + (r.filled === 1 ? 'One price was' : r.filled + ' prices were') + ' unreadable and worked out from the receipt total: ' +
       r.items.filter(function (i) { return i.filled; }).map(function (i) { return i.name + ' (' + fmt(i.line) + ')'; }).join(', ') + '.' : '';
-    d.scanNote = Math.abs(gap) > 1 ? 'Read ' + r.items.length + ' items. They come to ' + fmt(draftTotal(d)) + ' but the receipt says ' + fmt(r.total) + ', so ' + fmt(Math.abs(gap)) + (gap > 0 ? ' is missing or misread' : ' too much was read') + '. Please check the items against the receipt.'
+    d.scanNote = !r.total ? 'Read ' + r.items.length + ' items coming to ' + fmt(draftTotal(d)) + ', but the receipt total could not be read. Please check the items and charges against the receipt.'
+      : Math.abs(gap) > 1 ? 'Read ' + r.items.length + ' items. They come to ' + fmt(draftTotal(d)) + ' but the receipt says ' + fmt(r.total) + ', so ' + fmt(Math.abs(gap)) + (gap > 0 ? ' is missing or misread' : ' too much was read') + '. Please check the items against the receipt.'
       : 'Read ' + r.items.length + ' items, matching the receipt total of ' + fmt(draftTotal(d)) + '.' + worked + ' Please check them against the receipt.';
   } catch (e) { d.scanNote = e.status === 429 ? 'Too many scans for now. Type the items instead.' : 'Could not read that receipt. Try a clearer, flatter photo, or type the items.'; }
   S.scanning = false; render();

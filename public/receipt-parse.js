@@ -115,12 +115,12 @@
     return '';
   }
   function iso(y, mo, d) {
-    if (y < 2000 || y > 2100 || mo < 1 || mo > 12 || d < 1 || d > 31) return '';
+    if (y < 2000 || y > new Date().getFullYear() + 1 || mo < 1 || mo > 12 || d < 1 || d > 31) return '';
     return y + '-' + (mo < 10 ? '0' : '') + mo + '-' + (d < 10 ? '0' : '') + d;
   }
 
   function parseWith(text, AMOUNT) {
-    var lines = String(text || '').split(/\r?\n/).map(function (l) { return fixDigits(l.replace(/\s+/g, ' ').trim()); }).filter(Boolean);
+    var lines = String(text || '').split(/\r?\n/).map(function (l) { return fixDigits(l.replace(/\s+/g, ' ').trim().replace(/(\d)[\s~—–_=|'"`°^,.:;]*[~—–_=|'"`°^]+$/, '$1')); }).filter(Boolean);
     var out = { merchant: '', date: parseDate(text || ''), items: [], service: 0, sst: 0, rounding: 0, total: 0 };
     var totals = [], after = [], subs = [], rndRead = false, pendingName = '', held = '', last = null, itemsDone = false;
     // A row of numbers only ("11.00  1  0.00  11.00", "1  RM 11.90  0.00  RM11.90"): the price row of the name above it.
@@ -166,6 +166,9 @@
       if (SUBTOTAL.test(text)) { subs.push(Math.abs(amt)); itemsDone = itemsDone || out.items.length > 0; pendingName = ''; return; }
       if (ROUNDING.test(text)) { out.rounding = Math.max(-10000, Math.min(10000, amt)); rndRead = true; itemsDone = itemsDone || out.items.length > 0; return; }
       // The first SST and service amounts win; a "charges summary" after the total repeats them.
+      // After the total, a charges summary repeats SST and service with a taxable column ("SST 6%  69.40  4.16");
+      // those columns are easily mixed up, so such lines are skipped and a missing charge comes from the rate check.
+      if (totals.length && (SST.test(text) || SERVICE.test(text) || /summary/i.test(text)) && (/summary|taxable/i.test(text) || /\d[.,]\d/.test(text))) return;
       if (SST.test(text) && !/charge/i.test(text) || pct === '6' || pct === '8') { out.sst = out.sst || Math.abs(amt); if (pct && !out.sstPct && !/charge/i.test(text)) out.sstPct = +pct; itemsDone = itemsDone || out.items.length > 0; return; }
       if (SERVICE.test(text) || pct === '10' || pct === '5') { out.service = out.service || Math.abs(amt); if (pct && !out.svcPct) out.svcPct = +pct; itemsDone = itemsDone || out.items.length > 0; return; }
       if (SKIP.test(text)) { if (out.items.length) { itemsDone = true; after.push(Math.abs(amt)); } pendingName = ''; return; }
