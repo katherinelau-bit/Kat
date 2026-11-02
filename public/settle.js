@@ -1,10 +1,11 @@
 /* Trip maths: who owes what across many expenses, and the fewest transfers to settle up.
- * Shared by the server and the browser. All amounts are integer sen (cents). */
+ * Shared by the server and the browser. All amounts are integer cents. An expense can be in another currency
+ * (e.currency, e.rate = ringgit per unit); balances, payments and settling up are always in sen of ringgit. */
 (function (root, factory) {
   var node = typeof module === 'object' && module.exports;
-  var m = factory(node ? require('./split.js') : root.Split);
+  var m = factory(node ? require('./split.js') : root.Split, node ? require('./currency.js') : root.Currency);
   if (node) module.exports = m; else root.Settle = m;
-})(typeof self !== 'undefined' ? self : this, function (Split) {
+})(typeof self !== 'undefined' ? self : this, function (Split, Currency) {
   // An expense split by items works like a bill: people pick dishes, service charge and SST follow each person's
   // dishes (public/split.js), and dishes nobody picked stay with whoever paid.
   function itemsCalc(e) {
@@ -30,6 +31,11 @@
     return out;
   }
 
+  // The expense and each person's part of it in ringgit (the same as shares() for a ringgit expense).
+  var foreign = function (e) { return e.currency && e.currency !== 'MYR'; };
+  function amountRM(e) { return foreign(e) ? Currency.toRM(e.amount, e.rate) : e.amount; }
+  function sharesRM(e) { var s = shares(e); return foreign(e) ? Currency.spreadRM(s, e.amount, e.rate) : s; }
+
   // Per person: paid (for the group), owes (their shares), and net = what they should get back (negative: owe).
   // Payments between people count as soon as a slip is sent, so nobody is asked to pay twice while waiting.
   function balances(t) {
@@ -37,8 +43,8 @@
     (t.members || []).forEach(function (m) { b[m.id] = { paid: 0, owes: 0, sent: 0, received: 0, net: 0 }; });
     var add = function (id) { return b[id] || (b[id] = { paid: 0, owes: 0, sent: 0, received: 0, net: 0 }); };
     (t.expenses || []).forEach(function (e) {
-      add(e.paidBy).paid += e.amount;
-      var s = shares(e); Object.keys(s).forEach(function (id) { add(id).owes += s[id]; });
+      add(e.paidBy).paid += amountRM(e);
+      var s = sharesRM(e); Object.keys(s).forEach(function (id) { add(id).owes += s[id]; });
     });
     (t.payments || []).forEach(function (p) { add(p.from).sent += p.amount; add(p.to).received += p.amount; });
     Object.keys(b).forEach(function (id) { var x = b[id]; x.net = x.paid - x.owes + x.sent - x.received; });
@@ -62,7 +68,7 @@
     return out;
   }
 
-  function total(t) { var s = 0; (t.expenses || []).forEach(function (e) { s += e.amount; }); return s; }
+  function total(t) { var s = 0; (t.expenses || []).forEach(function (e) { s += amountRM(e); }); return s; }
 
-  return { shares: shares, balances: balances, transfers: transfers, total: total, itemsCalc: itemsCalc };
+  return { shares: shares, sharesRM: sharesRM, amountRM: amountRM, balances: balances, transfers: transfers, total: total, itemsCalc: itemsCalc };
 });

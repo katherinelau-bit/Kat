@@ -312,6 +312,77 @@ function photoCleanup() {
   console.log('passed: photo clean-up');
 }
 
+// Bills and trip expenses abroad: formatting, converting to ringgit, and reading receipts from other countries.
+function currencies() {
+  const C = require('./public/currency.js'), Settle = require('./public/settle.js'), { parse } = require('./public/receipt-parse.js');
+  assert.deepEqual([C.fmt(1290, 'MYR'), C.fmt(120000, 'THB'), C.fmt(15000000, 'VND'), C.fmt(-5, 'MYR'), C.fmt(100, 'XXX')], ['RM 12.90', 'THB 1,200.00', 'VND 150,000', 'RM -0.05', 'RM 1.00']);
+  assert.deepEqual([C.cleanRate('MYR', 0), C.cleanRate('THB', '0.1287'), C.cleanRate('THB', 0), C.cleanRate('THB', -1), C.cleanRate('THB', 'abc')], [1, 0.1287, 0, 0, 0]);
+  assert.equal(C.toRM(120000, 0.1287), 15444);
+  // Shares in baht, converted, still add up exactly to the converted total.
+  const sp = C.spreadRM({ a: 33334, b: 33333, c: 33333 }, 100000, 0.1287);
+  assert.equal(sp.a + sp.b + sp.c, C.toRM(100000, 0.1287));
+  // A trip: hotel THB 3,000 paid by Ann for 3, dinner RM 90 paid by Ben for 3. Everything settles in ringgit.
+  const trip = { members: [{ id: 'a' }, { id: 'b' }, { id: 'c' }], payments: [], expenses: [
+    { paidBy: 'a', amount: 300000, currency: 'THB', rate: 0.1287, mode: 'equal', among: ['a', 'b', 'c'] },
+    { paidBy: 'b', amount: 9000, mode: 'equal', among: ['a', 'b', 'c'] }] };
+  const bal = Settle.balances(trip);
+  assert.equal(Settle.total(trip), 38610 + 9000);
+  assert.equal(bal.a.paid, 38610);
+  assert.equal(Object.values(bal).reduce((x, y) => x + y.net, 0), 0, 'balances add up to zero');
+  assert.deepEqual(Settle.transfers(bal).reduce((x, t) => x + t.amount, 0), bal.a.net + Math.max(0, bal.b.net));
+  // Receipts: Thai and Singapore by their signs, Vietnamese dong and rupiah without cents, ringgit unchanged.
+  let r = parse('BAAN KHANITHA\n2 Tom Yum Goong        ฿ 520.00\n1 Pad Thai Kung        ฿ 180.00\nSubtotal               700.00\nService Charge 10%      70.00\nVAT 7%                  53.90\nTOTAL THB              823.90');
+  assert.deepEqual([r.currency, r.total, r.service, r.sst, r.items.map((i) => i.line)], ['THB', 82390, 7000, 5390, [52000, 18000]]);
+  r = parse('HAWKER\n1 Chicken Rice   S$5.80\n2 Noodle          S$11.60\nGST 9%            S$1.57\nTotal            S$18.97');
+  assert.deepEqual([r.currency, r.total, r.sst], ['SGD', 1897, 157]);
+  r = parse('PHO THIN\nPho bo tai lan        2    130.000\nNem ran               1     65.000\nTong cong                 195.000 đ');
+  assert.deepEqual([r.currency, r.total, r.items.map((i) => i.qty + ' ' + i.line)], ['VND', 19500000, ['2 13000000', '1 6500000']]);
+  r = parse('WARUNG\nNasi Campur      Rp 45.000\nEs Teh 2 x 8.000  Rp 16.000\nPB1 10%          Rp 6.100\nTotal            Rp 67.100');
+  assert.deepEqual([r.currency, r.total, r.sst, r.items.map((i) => i.line)], ['IDR', 6710000, 610000, [4500000, 1600000]]);
+  r = parse('ICHIRAN\nRamen x2      2,360\nEgg           150\nTotal        2,510', { currency: 'JPY' });
+  assert.deepEqual([r.currency, r.total], ['JPY', 251000]);
+  r = parse('RESTORAN BANGKOK JAM\nTom Yam        RM 18.00\nTotal          RM 18.00');
+  assert.deepEqual([r.currency, r.total], [undefined, 1800]);
+  console.log('passed: currencies and receipts abroad');
+}
+
+// Bills abroad through the API: the rate is required, stored, and the payer can change it; today's rates are cached.
+async function currencySuite(name, call) {
+  const items = [{ name: 'Tom Yum', qty: 1, price: 52000 }, { name: 'Pad Thai', qty: 1, price: 18000 }];
+  assert.equal((await call('POST', '/api/bills', { title: 'Bangkok dinner', payerName: 'Kat', currency: 'THB', items })).status, 400, 'a rate is needed');
+  const made = (await call('POST', '/api/bills', { title: 'Bangkok dinner', payerName: 'Kat', currency: 'THB', rate: 0.1287, items })).body;
+  let b = (await call('GET', '/api/bills/' + made.id, null, made.token)).body.bill;
+  assert.deepEqual([b.currency, b.rate, b.items[0].price], ['THB', 0.1287, 52000]);
+  b = (await call('PUT', '/api/bills/' + made.id, { title: 'Bangkok dinner', currency: 'THB', rate: 0.13, items: b.items }, made.token)).body.bill;
+  assert.equal(b.rate, 0.13);
+  // Old bills and bills without a currency are ringgit.
+  const rm = (await call('POST', '/api/bills', { title: 'Lunch', payerName: 'Kat', items })).body;
+  b = (await call('GET', '/api/bills/' + rm.id, null, rm.token)).body.bill;
+  assert.deepEqual([b.currency, b.rate], ['MYR', 1]);
+  // A trip expense in baht keeps its currency and rate; without a rate it is refused.
+  const trip = (await call('POST', '/api/trips', { title: 'Bangkok', name: 'Kat' })).body;
+  const exp = { title: 'Hotel', paidBy: trip.memberId, amount: 300000, currency: 'THB', mode: 'equal', among: [trip.memberId] };
+  assert.equal((await call('POST', '/api/trips/' + trip.id + '/expenses', exp, trip.token)).status, 400);
+  const t = (await call('POST', '/api/trips/' + trip.id + '/expenses', { ...exp, rate: 0.1287 }, trip.token)).body.trip;
+  assert.deepEqual([t.expenses[0].currency, t.expenses[0].rate, t.expenses[0].amount], ['THB', 0.1287, 300000]);
+  console.log('passed: bills abroad, ' + name);
+}
+async function ratesCheck() {
+  const fb = fakeBlobs(); let calls = 0, down = false;
+  const fetchFn = async () => { calls++; if (down) throw new Error('offline'); return new Response(JSON.stringify({ result: 'success', time_last_update_utc: 'Mon, 02 Nov 2026 00:02:31 +0000', rates: { MYR: 1, THB: 7.77, SGD: 0.3, VND: 5800 } })); };
+  const handle = createApi({ store: createBlobStore(fb), fetchFn });
+  const get = async () => { const r = await handle(new Request('https://example.test/api/rates')); return { status: r.status, body: await r.json() }; };
+  let r = await get();
+  assert.equal(r.status, 200);
+  assert.deepEqual([r.body.rates.THB, r.body.rates.SGD, r.body.rates.VND, r.body.date], [0.1287, 3.333333, 0.000172, '02 Nov 2026']);
+  await get(); assert.equal(calls, 1, 'cached, not fetched again');
+  // Source down and nothing cached: a clear error, so the person types the rate.
+  down = true;
+  const empty = createApi({ store: createBlobStore(fakeBlobs()), fetchFn });
+  assert.equal((await empty(new Request('https://example.test/api/rates'))).status, 503);
+  console.log('passed: exchange rates (cached, source down)');
+}
+
 // Linking devices: how two copies of "my bills and trips" merge.
 function syncMerge() {
   const { merge, sameList } = require('./public/sync.js');
@@ -600,6 +671,8 @@ async function tripItemsSuite(name, call) {
   photoCleanup();
   tripMaths();
   syncMerge();
+  currencies();
+  await ratesCheck();
   await pushNotifications();
   await new Promise((r) => server.listen(0, r));
   const base = 'http://localhost:' + server.address().port;
@@ -611,6 +684,7 @@ async function tripItemsSuite(name, call) {
   await suite('self-hosted server (SQLite)', viaHttp);
   await tripSuite('self-hosted server (SQLite)', viaHttp);
   await tripItemsSuite('self-hosted server (SQLite)', viaHttp);
+  await currencySuite('self-hosted server (SQLite)', viaHttp);
   await syncSuite('self-hosted server (SQLite)', viaHttp, () => { const { DatabaseSync } = require('node:sqlite'); const d = new DatabaseSync(require('node:path').join(process.env.DATA_DIR, 'bei-cin-lah.db')); const t = d.prepare('SELECT id, data FROM syncs').all().map((x) => x.id + ' ' + x.data).join('\n'); d.close(); return t; });
 
   const fb = fakeBlobs();
@@ -623,6 +697,7 @@ async function tripItemsSuite(name, call) {
   await suite('Netlify function (Blobs stand-in)', viaFunction);
   await tripSuite('Netlify function (Blobs stand-in)', viaFunction);
   await tripItemsSuite('Netlify function (Blobs stand-in)', viaFunction);
+  await currencySuite('Netlify function (Blobs stand-in)', viaFunction);
   await syncSuite('Netlify function (Blobs stand-in)', viaFunction, () => fb.dump());
 
   // The real @netlify/blobs client against its own local server, if `npm install` has been run.

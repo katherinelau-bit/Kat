@@ -56,6 +56,7 @@ Claude scans are limited to 15 per hour per visitor to protect your bill. Scans 
 - `lib/core.js`: the whole API, the same code on Netlify and on a normal server.
 - `netlify/functions/api.mjs` and `lib/blobs-store.js`: the Netlify side, storing bills in Netlify Blobs.
 - `server.js`: the self-hosted side, storing bills in a SQLite file.
+- `public/currency.js`: the currency list, formatting, and converting shares to ringgit, shared by server and browser.
 - `public/sync.js`: merges the lists of bills and trips from linked devices, shared by server and browser.
 - `public/settle.js`: the trip maths (shares, balances, settle-up transfers), shared by server and browser.
 - `public/split.js`: the split maths, shared by server and browser. Amounts are whole sen so shares always add
@@ -82,6 +83,12 @@ Claude scans are limited to 15 per hour per visitor to protect your bill. Scans 
   nobody picks stay with whoever paid. The trip page shows each person's balance and a short list of
   transfers that settles everyone up. Each person adds their own DuitNow QR; whoever pays uploads a slip or marks
   cash, and the person paid confirms. Only whoever added an expense, or who made the trip, can change it.
+- **Bills and trips abroad.** Pick the currency on a bill or a trip expense (Thai baht, yuan, dong, Singapore and
+  US dollars, euro and others). Today's rate to ringgit is filled in (from Exchange Rate API, free, refreshed every
+  few hours) and can be changed to what your card or money changer charged. Prices stay in that currency; each
+  person's share is also shown in RM, and everyone pays back in RM by DuitNow. A trip can mix currencies; balances and
+  settling up are in RM. Scanning a receipt from abroad switches the currency by itself when it shows one (THB, S$,
+  đ, Rp, €...), and reads prices in dong, rupiah or yen that have no cents.
 - **Phone and laptop.** There are no accounts: each browser keeps its own list of bills and trips. To see them
   on another device, tap "Link my devices" on the home page and scan the QR code (or open the link) on the other
   phone or laptop. From then on, every bill and trip you create, join, leave or delete on one shows up on the

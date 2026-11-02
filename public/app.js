@@ -2,7 +2,16 @@
 'use strict';
 var $ = function (s) { return document.querySelector(s); };
 var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
-var fmt = function (c) { return 'RM ' + (c < 0 ? '-' : '') + (Math.abs(c) / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+// Money in the currency of what is on screen (CUR: set by render() for a bill or expense abroad), or in a given one.
+var CUR = 'MYR';
+var fmt = function (c, code) { return Currency.fmt(c, code || CUR); };
+// Abroad: amounts are in the bill's currency; people pay each other in ringgit at the bill's rate.
+function fx(x) { return !!(x && x.currency && x.currency !== 'MYR'); }
+function rmOf(c, x) { return fx(x) ? Currency.toRM(c, x.rate) : c; }
+function rmText(c, x) { return Currency.fmt(rmOf(c, x), 'MYR'); }
+// What someone transfers: ringgit, with the bill's own amount alongside when it is abroad.
+function payText(x, c) { return fx(x) ? rmText(c, x) + ' (' + Currency.fmt(c, x.currency) + ')' : Currency.fmt(c, 'MYR'); }
+function rateText(x) { return '1 ' + x.currency + ' = RM ' + x.rate; }
 var toC = function (s) { var n = parseFloat(String(s == null ? '' : s).replace(/,/g, '')); return isFinite(n) ? Math.round(n * 100) : 0; };
 var fixed = function (c) { return (c / 100).toFixed(2); };
 function ago(ms) { var m = Math.round((Date.now() - ms) / 60000); if (m < 1) return 'just now'; if (m < 60) return m + ' min ago'; var h = Math.round(m / 60); if (h < 24) return h + ' h ago'; var d = Math.round(h / 24); return d + ' day' + (d > 1 ? 's' : '') + ' ago'; }
@@ -192,9 +201,9 @@ async function confirmLink() {
 }
 
 /* ---------- drafts (new bill, or editing one) ---------- */
-function newDraft() { return { title: '', date: new Date().toISOString().slice(0, 10), payerName: S.store.name || '', items: [{ name: '', qty: '1', price: '' }], service: '', sst: '', rounding: '', qr: '', receipt: '', scanFile: null, scanTotal: 0, scanNote: '' }; }
+function newDraft() { return { title: '', date: new Date().toISOString().slice(0, 10), payerName: S.store.name || '', currency: 'MYR', rate: '', rateNote: '', items: [{ name: '', qty: '1', price: '' }], service: '', sst: '', rounding: '', qr: '', receipt: '', scanFile: null, scanTotal: 0, scanNote: '' }; }
 // An unfinished new bill is kept on this phone, so a refresh or a closed tab does not lose a scanned receipt.
-var DRAFT_KEY = 'bcl.draft.v1', DRAFT_FIELDS = ['title', 'date', 'payerName', 'items', 'service', 'sst', 'rounding', 'qr', 'receipt', 'scanTotal', 'scanNote', 'scanTitle'], draftT = null;
+var DRAFT_KEY = 'bcl.draft.v1', DRAFT_FIELDS = ['title', 'date', 'payerName', 'currency', 'rate', 'rateNote', 'items', 'service', 'sst', 'rounding', 'qr', 'receipt', 'scanTotal', 'scanNote', 'scanTitle'], draftT = null;
 function saveDraft() {
   var d = S.draft; if (!d || d.editId) return;
   clearTimeout(draftT);
@@ -214,7 +223,7 @@ async function startEdit(id) {
   try {
     var b = (await api('GET', '/api/bills/' + id, null, tok(id))).bill, me = myId(b);
     if (!me || !mem(b, me).isPayer) { toast('Only the person who paid can edit this bill'); nav('/b/' + id); return; }
-    S.draft = { editId: id, title: b.title, date: b.date, payerName: nm(b, b.payerId), service: b.service ? fixed(b.service) : '', sst: b.sst ? fixed(b.sst) : '', rounding: b.rounding ? fixed(b.rounding) : '',
+    S.draft = { editId: id, title: b.title, date: b.date, payerName: nm(b, b.payerId), currency: b.currency || 'MYR', rate: fx(b) ? String(b.rate) : '', rateNote: '', service: b.service ? fixed(b.service) : '', sst: b.sst ? fixed(b.sst) : '', rounding: b.rounding ? fixed(b.rounding) : '',
       items: b.items.map(function (i) { return { id: i.id, name: i.name, qty: String(i.qty), price: fixed(Math.round(i.price / i.qty)), line: i.price }; }),
       paidCount: b.members.filter(function (m) { return !m.isPayer && m.pay.status === 'paid'; }).length, qr: '', receipt: '', scanFile: null, scanTotal: 0, scanNote: '' };
   } catch (e) { toast(e.status === 404 ? 'This bill was not found' : 'Could not open this bill'); nav('/'); return; }
@@ -241,7 +250,7 @@ function alertsFor(bills) {
     var c = Split.calc(b), me = mem(b, id);
     if (!me.isPayer) {
       var s = c.per[id];
-      if (s && s.total > 0 && me.pay.status === 'unpaid') out += '<div class="alert"><span>You still owe <b class="mono">' + fmt(s.total) + '</b> to ' + esc(nm(b, b.payerId)) + ' for ' + esc(b.title) + (me.remind ? '. Reminded ' + ago(me.remind.at) + '.' : '.') + '</span><button class="btn small" data-nav="/b/' + b.id + '">Pay now</button></div>';
+      if (s && s.total > 0 && me.pay.status === 'unpaid') out += '<div class="alert"><span>You still owe <b class="mono">' + payText(b, s.total) + '</b> to ' + esc(nm(b, b.payerId)) + ' for ' + esc(b.title) + (me.remind ? '. Reminded ' + ago(me.remind.at) + '.' : '.') + '</span><button class="btn small" data-nav="/b/' + b.id + '">Pay now</button></div>';
       else if (!s) out += '<div class="alert info"><span>Pick what you ate in ' + esc(b.title) + '.</span><button class="btn small" data-nav="/b/' + b.id + '">Choose items</button></div>';
     } else {
       var n = b.members.filter(function (m) { return !m.isPayer && m.pay.status === 'sent'; }).length;
@@ -256,8 +265,8 @@ function viewHome() {
   var owe = 0, owed = 0;
   S.home.forEach(function (b) {
     var id = myId(b); if (!id) return; var c = Split.calc(b), me = mem(b, id);
-    if (me.isPayer) b.members.forEach(function (m) { if (!m.isPayer && m.pay.status !== 'paid') owed += owedBy(m, c); });
-    else if (c.per[id] && me.pay.status !== 'paid') owe += owedBy(me, c);
+    if (me.isPayer) b.members.forEach(function (m) { if (!m.isPayer && m.pay.status !== 'paid') owed += rmOf(owedBy(m, c), b); });
+    else if (c.per[id] && me.pay.status !== 'paid') owe += rmOf(owedBy(me, c), b);
   });
   S.homeTrips.forEach(function (t) { var id = tmyId(t); if (!id) return; var n = tripNet(t, id); if (n > 0) owed += n; else owe -= n; });
   var ud = loadDraft();
@@ -275,8 +284,8 @@ function viewHome() {
     if (!me) pill = '<span class="pill none">Not joined</span>';
     else if (me.isPayer) { pill = '<span class="pill open">You paid</span>'; line = others.filter(function (m) { return m.pay.status === 'paid'; }).length + ' of ' + others.length + ' settled'; }
     else if (!c.per[id]) pill = '<span class="pill open">Pick items</span>';
-    else { var st = me.pay.status; pill = '<span class="pill ' + st + '">' + (st === 'paid' ? 'Paid' : st === 'sent' ? 'Slip sent' : 'To pay') + '</span>'; line = 'Your share ' + fmt(owedBy(me, c)); }
-    h += '<button class="bill" data-nav="/b/' + b.id + '"><div class="grow"><div class="t">' + esc(b.title) + '</div><div class="small muted">' + esc(b.date || '') + ' · paid by ' + esc(nm(b, b.payerId)) + ' · ' + fmt(c.total) + '</div>' + (line ? '<div class="small mono">' + esc(line) + '</div>' : '') + '</div>' + pill + '</button>';
+    else { var st = me.pay.status; pill = '<span class="pill ' + st + '">' + (st === 'paid' ? 'Paid' : st === 'sent' ? 'Slip sent' : 'To pay') + '</span>'; line = 'Your share ' + payText(b, owedBy(me, c)); }
+    h += '<button class="bill" data-nav="/b/' + b.id + '"><div class="grow"><div class="t">' + esc(b.title) + '</div><div class="small muted">' + esc(b.date || '') + ' · paid by ' + esc(nm(b, b.payerId)) + ' · ' + fmt(c.total, b.currency) + '</div>' + (line ? '<div class="small mono">' + esc(line) + '</div>' : '') + '</div>' + pill + '</button>';
   });
   h += '<div class="row between"><h2>Your trips</h2><button class="btn primary" data-nav="/t/new">New trip</button></div>';
   if (!S.homeTrips.length) h += '<div class="card empty"><h3>No trips yet</h3><p class="muted">Going away or holding an event where different people pay? Start a trip, everyone adds what they paid, and the app works out who pays whom at the end.</p></div>';
@@ -309,7 +318,7 @@ function viewBill() {
   if (!b) return topbar() + '<div class="card empty"><h3>Opening bill…</h3></div>';
   var c = Split.calc(b), meId = myId(b), me = meId ? mem(b, meId) : null, isPayer = !!(me && me.isPayer);
   var h = topbar() + alertsFor([b]) + '<button class="btn ghost" data-nav="/">← Your bills</button>';
-  h += '<div class="row between" style="align-items:flex-start"><div class="grow"><h2>' + esc(b.title) + '</h2><div class="small muted">' + esc(b.date || '') + ' · paid by ' + esc(nm(b, b.payerId)) + (isPayer ? ' (you)' : '') + '</div></div><div class="mono" style="font-size:20px">' + fmt(c.total) + '</div></div>';
+  h += '<div class="row between" style="align-items:flex-start"><div class="grow"><h2>' + esc(b.title) + '</h2><div class="small muted">' + esc(b.date || '') + ' · paid by ' + esc(nm(b, b.payerId)) + (isPayer ? ' (you)' : '') + '</div>' + (fx(b) ? '<div class="small muted">Prices in ' + b.currency + ' · ' + rateText(b) + ' · everyone pays back in RM</div>' : '') + '</div><div style="text-align:right"><div class="mono" style="font-size:20px">' + fmt(c.total) + '</div>' + (fx(b) ? '<div class="small muted mono">≈ ' + rmText(c.total, b) + '</div>' : '') + '</div></div>';
 
   if (!me) {
     var open = b.members.filter(function (m) { return !m.claimed; });
@@ -351,11 +360,12 @@ function viewBill() {
     if (my.svc) h += '<div class="chg"><span>Service charge</span><span>' + fmt(my.svc) + '</span></div>';
     if (my.sst) h += '<div class="chg"><span>SST</span><span>' + fmt(my.sst) + '</span></div>';
     if (my.rnd) h += '<div class="chg"><span>Rounding</span><span>' + fmt(my.rnd) + '</span></div>';
-    h += '<div class="chg tot"><span>' + (you ? 'You pay' : esc(acm.name) + ' pays') + '</span><span class="big" style="font-size:22px">' + fmt(my.total) + '</span></div></div>';
+    h += '<div class="chg tot"><span>' + (you ? 'You pay' : esc(acm.name) + ' pays') + '</span><span class="big" style="font-size:22px">' + fmt(my.total) + '</span></div>' +
+      (fx(b) ? '<div class="chg tot"><span>In ringgit<span class="small" style="display:block;color:var(--muted);font-weight:400">' + esc(rateText(b)) + '</span></span><span class="big" style="font-size:22px">' + rmText(my.total, b) + '</span></div>' : '') + '</div>';
     if (!isPayer) {
       h += '<div class="pay">';
       if (b.hasQr) h += '<div><img class="qr" src="/api/bills/' + b.id + '/img/qr?v=' + (b.qrAt || b.createdAt) + '" alt="DuitNow QR for ' + esc(nm(b, b.payerId)) + '" data-act="zoom" data-src="qr" style="cursor:zoom-in"></div>';
-      h += '<div class="grow" style="display:flex;flex-direction:column;gap:8px"><p><b>Pay ' + esc(nm(b, b.payerId)) + ' ' + fmt(my.total) + '</b></p>' +
+      h += '<div class="grow" style="display:flex;flex-direction:column;gap:8px"><p><b>Pay ' + esc(nm(b, b.payerId)) + ' ' + payText(b, my.total) + '</b></p>' +
         (b.hasQr ? '<p class="small muted">Save the QR picture, open your banking app, choose Scan QR, then upload it. Transfer the exact amount.</p>' : '<p class="small muted">' + esc(nm(b, b.payerId)) + ' has not added a DuitNow QR yet.</p>') +
         (st === 'paid' ? '<p class="small" style="color:var(--good);font-weight:700">' + esc(nm(b, b.payerId)) + ' confirmed your payment.</p>' :
           st === 'sent' ? '<p class="small" style="color:var(--warn);font-weight:700">Slip sent. Waiting for ' + esc(nm(b, b.payerId)) + ' to confirm.</p><div><button class="btn small" data-act="slipbtn">Replace slip</button></div>' :
@@ -375,16 +385,38 @@ function viewBill() {
       else { if (s) acts += '<button class="btn small" data-act="markpaid" data-uid="' + m.id + '">Mark paid (cash)</button>'; acts += '<button class="btn small" data-act="remind" data-uid="' + m.id + '">Remind</button>'; }
       if (m.claimed) acts += '<button class="btn small" data-act="resetlink" data-uid="' + m.id + '">Reset link</button>';
     }
-    h += '<div class="person">' + av(b, m.id) + '<div class="grow"><div><b>' + esc(m.name) + (m.id === meId ? ' (you)' : '') + '</b></div><div class="small muted mono">' + (s ? fmt(owedBy(m, c)) : 'No items yet') + (m.remind && st === 'unpaid' && !m.isPayer ? ' · reminded ' + m.remind.count + '×, last ' + ago(m.remind.at) : '') + '</div>' + (isPayer && st === 'sent' ? slipCheckHtml(m) : '') + '</div>' + statusPill(m, c, m.isPayer) + (acts ? '<div class="acts" style="width:100%;padding-left:38px">' + acts + '</div>' : '') + '</div>';
+    h += '<div class="person">' + av(b, m.id) + '<div class="grow"><div><b>' + esc(m.name) + (m.id === meId ? ' (you)' : '') + '</b></div><div class="small muted mono">' + (s ? fmt(owedBy(m, c)) + (fx(b) ? ' · ' + rmText(owedBy(m, c), b) : '') : 'No items yet') + (m.remind && st === 'unpaid' && !m.isPayer ? ' · reminded ' + m.remind.count + '×, last ' + ago(m.remind.at) : '') + '</div>' + (isPayer && st === 'sent' ? slipCheckHtml(m) : '') + '</div>' + statusPill(m, c, m.isPayer) + (acts ? '<div class="acts" style="width:100%;padding-left:38px">' + acts + '</div>' : '') + '</div>';
   });
   h += '</div></div>';
   h += '<div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="summary">Share summary</button>' + (isPayer ? '<button class="btn small" data-nav="/b/' + b.id + '/edit">Edit items</button>' + (b.hasQr ? '<button class="btn small" data-act="addqr">Change DuitNow QR</button>' : '') + '<button class="btn small" data-act="copyadmin">Copy my payer link (keep private)</button><button class="btn small" data-act="delete" style="color:var(--bad)">Delete bill</button>' : '') + '</div>';
   return h;
 }
 function totalsHtml(d) {
-  var sum = draftSum(d), tot = draftTotal(d), w = '';
+  var sum = draftSum(d), tot = draftTotal(d), w = '', x = { currency: d.currency, rate: Number(d.rate) || 0 };
+  if (fx(x) && x.rate) w += '<span class="small" style="display:block;color:var(--muted);font-weight:400">≈ ' + rmText(tot, x) + ' (' + esc(rateText(x)) + ')</span>';
   if (d.scanTotal && Math.abs(d.scanTotal - tot) > 1) w = '<span class="small" style="color:var(--warn);display:block;font-weight:400">Receipt total read as ' + fmt(d.scanTotal) + '. Check the items and charges.</span>';
   return '<span>Total<span class="small" style="display:block;color:var(--muted);font-weight:400">Items ' + fmt(sum) + '</span>' + w + '</span><span>' + fmt(tot) + '</span>';
+}
+// Currency picker, plus the rate to ringgit for anything else. `p` is the field prefix ("f" bill, "e" trip expense).
+function currencyHtml(d, p) {
+  var attr = p === 'f' ? 'data-f' : 'data-ef', abroad = d.currency && d.currency !== 'MYR';
+  var h = '<div class="two"><div class="field"><label for="' + p + '-cur">Currency</label><select id="' + p + '-cur" ' + attr + '="currency">' +
+    Currency.list.map(function (c) { return '<option value="' + c.code + '"' + (c.code === (d.currency || 'MYR') ? ' selected' : '') + '>' + c.code + ' · ' + esc(c.name) + '</option>'; }).join('') + '</select></div>';
+  if (abroad) h += '<div class="field"><label for="' + p + '-rate">1 ' + d.currency + ' = RM</label><input type="number" step="any" min="0" inputmode="decimal" id="' + p + '-rate" ' + attr + '="rate" value="' + esc(d.rate) + '" placeholder="e.g. 0.1287"></div>';
+  h += '</div>';
+  if (abroad) h += '<p class="small muted">' + esc(d.rateNote || '') + (d.rateNote ? ' ' : '') + 'Change it to the rate your card or money changer charged. Everyone pays back in RM.' +
+    (S.rates && S.rates.sourceUrl ? ' <a href="' + esc(S.rates.sourceUrl) + '" target="_blank" rel="noopener" class="muted">' + esc(S.rates.source) + '</a>' : '') + '</p>';
+  return h;
+}
+// Today's rate for the chosen currency, from the server (which keeps it for a few hours); the person can change it.
+async function fillRate(d) {
+  if (!d.currency || d.currency === 'MYR') { d.rate = ''; d.rateNote = ''; render(); return; }
+  try {
+    if (!S.rates) S.rates = await api('GET', '/api/rates');
+    var v = S.rates.rates[d.currency];
+    if (v) { d.rate = String(v); d.rateNote = 'Today\'s rate' + (S.rates.date ? ' (' + S.rates.date + ')' : '') + '.'; }
+  } catch (e) { d.rateNote = 'Could not get today\'s rate. Type it in.'; }
+  render();
 }
 function viewNew() {
   var d = S.draft;
@@ -396,16 +428,19 @@ function viewNew() {
   if (!ed) h += '<div class="card"><h3>1. Receipt</h3><div class="drop"><div class="row">' + (d.receipt ? '<img class="thumb" src="' + d.receipt + '" alt="Receipt photo">' : '') + '<div><b>' + (d.receipt ? 'Receipt attached' : 'Add a photo of the receipt') + '</b><div class="small muted">' + 'The items, service charge and SST are read for you. Check them before you create the bill. Friends can view the photo.' + '</div></div></div><div class="row"><button class="btn" data-act="pickreceipt">' + (d.receipt ? 'Change photo' : 'Choose photo') + '</button>' + (d.scanFile ? '<button class="btn primary" data-act="scan"' + (S.scanning ? ' disabled' : '') + '>' + (S.scanning ? 'Reading…' : 'Read receipt') + '</button>' : '') + '</div></div>' +
     (d.scanNote ? '<p class="small" style="color:var(--warn)">' + esc(d.scanNote) + '</p>' : '') + '</div>';
   h += '<div class="card"><h3>' + (ed ? 'Items' : '2. Items') + '</h3><div class="two"><div class="field"><label for="f-title">Bill name</label><input type="text" id="f-title" data-f="title" maxlength="80" value="' + esc(d.title) + '" placeholder="e.g. Thai dinner"></div><div class="field"><label for="f-date">Date</label><input type="date" id="f-date" data-f="date" value="' + esc(d.date) + '"></div><div class="field"><label for="f-payer">Your name (you paid)</label><input type="text" id="f-payer" data-f="payerName" maxlength="40"' + (ed ? ' disabled' : '') + ' value="' + esc(d.payerName) + '" placeholder="e.g. Katherine"></div></div>';
-  h += '<div class="items"><div class="irow h"><span>Item</span><span>Qty</span><span>Each (RM)</span><span style="text-align:right">Total</span><span></span></div>';
+  h += currencyHtml(d, 'f');
+  h += '<div class="items"><div class="irow h"><span>Item</span><span>Qty</span><span>Each (' + CUR + ')</span><span style="text-align:right">Total</span><span></span></div>';
   d.items.forEach(function (it, i) { h += '<div class="irow"><input type="text" aria-label="Item name" data-i="' + i + '" data-k="name" value="' + esc(it.name) + '" placeholder="Item"><input type="number" min="1" aria-label="Quantity" data-i="' + i + '" data-k="qty" value="' + esc(it.qty) + '"><input type="number" step="0.01" min="0" inputmode="decimal" aria-label="Price of one" data-i="' + i + '" data-k="price" value="' + esc(it.price) + '" placeholder="0.00"><span class="mono small" data-line="' + i + '">' + fmt(lineCents(it)) + '</span><button class="x" data-act="rmitem" data-i="' + i + '" aria-label="Remove item">×</button></div>'; });
   h += '</div><div><button class="btn small" data-act="additem">Add item</button></div><p class="small muted">Enter the price of one. The bill multiplies it by the quantity, so picking a dish with quantity 2 gives you both.</p></div>';
-  h += '<div class="card"><h3>' + (ed ? 'Charges' : '3. Charges') + '</h3><div class="two"><div class="field"><label for="f-svc">Service charge (RM)</label><input type="number" step="0.01" id="f-svc" data-f="service" value="' + esc(d.service) + '" placeholder="0.00"></div><div class="field"><label for="f-sst">SST (RM)</label><input type="number" step="0.01" id="f-sst" data-f="sst" value="' + esc(d.sst) + '" placeholder="0.00"></div><div class="field"><label for="f-rnd">Rounding (RM)</label><input type="number" step="0.01" id="f-rnd" data-f="rounding" value="' + esc(d.rounding) + '" placeholder="0.00"></div></div><div class="chips"><button class="btn small" data-act="svc10">Service 10%</button><button class="btn small" data-act="sst6">SST 6%</button><button class="btn small" data-act="sst8">SST 8%</button></div><p class="small muted">The quick buttons work out the amount from your items. SST is applied after service charge. Match them to what the receipt prints.</p><div class="receipt"><div class="chg tot" id="draftTotals">' + totalsHtml(d) + '</div></div></div>';
+  h += '<div class="card"><h3>' + (ed ? 'Charges' : '3. Charges') + '</h3><div class="two"><div class="field"><label for="f-svc">Service charge (' + CUR + ')</label><input type="number" step="0.01" id="f-svc" data-f="service" value="' + esc(d.service) + '" placeholder="0.00"></div><div class="field"><label for="f-sst">' + (CUR === 'MYR' ? 'SST' : 'Tax') + ' (' + CUR + ')</label><input type="number" step="0.01" id="f-sst" data-f="sst" value="' + esc(d.sst) + '" placeholder="0.00"></div><div class="field"><label for="f-rnd">Rounding (' + CUR + ')</label><input type="number" step="0.01" id="f-rnd" data-f="rounding" value="' + esc(d.rounding) + '" placeholder="0.00"></div></div><div class="chips"><button class="btn small" data-act="svc10">Service 10%</button><button class="btn small" data-act="sst6">SST 6%</button><button class="btn small" data-act="sst8">SST 8%</button></div><p class="small muted">The quick buttons work out the amount from your items. SST is applied after service charge. Match them to what the receipt prints.</p><div class="receipt"><div class="chg tot" id="draftTotals">' + totalsHtml(d) + '</div></div></div>';
   if (!ed) h += '<div class="card"><h3>4. Your DuitNow QR</h3><div class="drop"><div class="row">' + (d.qr ? '<img class="thumb" src="' + d.qr + '" alt="Your DuitNow QR" style="background:#fff">' : '') + '<div><b>' + (d.qr ? 'QR attached' : 'Add your DuitNow QR picture') + '</b><div class="small muted">Friends scan it to pay you the exact amount.</div></div></div><button class="btn" data-act="pickqr">' + (d.qr ? 'Change' : 'Choose picture') + '</button></div></div>';
   h += '<div class="row"><button class="btn primary" data-act="create"' + (S.creating ? ' disabled' : '') + '>' + (S.creating ? (ed ? 'Saving…' : 'Creating…') : (ed ? 'Save changes' : 'Create bill')) + '</button><button class="btn" data-nav="' + back + '">Cancel</button></div>';
   return h;
 }
 function render() {
   var a = $('#app'); if (!a) return;
+  var pe = S.view === 'picks' ? pickExpense() : null;
+  CUR = Currency.clean(S.view === 'new' && S.draft ? S.draft.currency : S.view === 'bill' && S.bill ? S.bill.currency : S.view === 'expense' && S.edraft ? S.edraft.currency : pe ? pe.currency : 'MYR');
   a.innerHTML = S.view === 'new' ? viewNew() : S.view === 'bill' ? viewBill() : S.view === 'trip' ? viewTrip() : S.view === 'tripnew' ? viewTripNew() : S.view === 'expense' ? viewExpense() : S.view === 'picks' ? viewPicks() : viewHome();
   if (S.view === 'new') saveDraft();
   if (S.view === 'bill' && S.bill) checkSlips(S.bill);
@@ -418,7 +453,7 @@ async function refreshForce() { try { var j = await api('GET', '/api/bills/' + S
 
 function remindText(b, uids) {
   var c = Split.calc(b);
-  var lines = uids.map(function (id) { var m = mem(b, id), s = c.per[id]; return '• ' + m.name + ': ' + (s ? fmt(owedBy(m, c)) : 'please pick your dishes'); });
+  var lines = uids.map(function (id) { var m = mem(b, id), s = c.per[id]; return '• ' + m.name + ': ' + (s ? payText(b, owedBy(m, c)) : 'please pick your dishes'); });
   return 'Hi, a reminder for "' + b.title + '" (paid by ' + nm(b, b.payerId) + ').\n' + lines.join('\n') + '\nPlease pay via my DuitNow QR and upload your slip here: ' + shareUrl(b) + '\nThank you!';
 }
 function showReminder(uids, title) {
@@ -503,7 +538,7 @@ function viewTrip() {
 
   // Your position
   var my = bal[meId] || { net: 0, paid: 0, owes: 0 };
-  h += '<div class="tiles"><div class="tile"><div class="k">' + (my.net > 0 ? 'You get back' : my.net < 0 ? 'You owe' : 'You are') + '</div><div class="v">' + (my.net ? fmt(Math.abs(my.net)) : 'Settled') + '</div></div><div class="tile"><div class="k">You paid · your share</div><div class="v" style="font-size:18px">' + fmt(my.paid) + ' · ' + fmt(my.owes) + '</div></div></div>';
+  h += '<div class="tiles"><div class="tile"><div class="k">' + (my.net > 0 ? 'You get back' : my.net < 0 ? 'You owe' : 'You are') + '</div><div class="v">' + (my.net ? fmt(Math.abs(my.net)) : 'Settled') + '</div></div><div class="tile"><div class="k">You paid · your share</div><div class="v" style="font-size:16px">Paid ' + fmt(my.paid) + '<br>Share ' + fmt(my.owes) + '</div></div></div>';
   if (!me.hasQr) h += '<div class="alert"><span>Add your DuitNow QR so others can pay you when settling up.</span><button class="btn small primary" data-act="tqr">Add my DuitNow QR</button></div>';
   h += notifyHtml(t, 'someone pays you');
   h += tripSettleHtml(t, meId);
@@ -549,7 +584,7 @@ function tripExpensesHtml(t, me) {
   if (!t.expenses.length) return h + '<p class="muted">Nothing added yet.' + (me ? ' Whoever pays for something adds it here: hotel, meals, petrol, tickets…' : '') + '</p></div>';
   t.expenses.slice().reverse().forEach(function (e) {
     var sh = Settle.shares(e), mine = me ? sh[me.id] || 0 : 0, canEdit = me && (me.isOwner || e.addedBy === me.id);
-    h += '<div class="person">' + tav(t, e.paidBy) + '<div class="grow"><div><b>' + esc(e.title) + '</b></div><div class="small muted">' + esc(e.date || '') + ' · paid by ' + esc(me && e.paidBy === me.id ? 'you' : tnm(t, e.paidBy)) + '</div><div class="small muted">' + esc(splitText(t, e)) + (mine ? ' · your share <span class="mono">' + fmt(mine) + '</span>' : '') + '</div></div><span class="mono">' + fmt(e.amount) + '</span>' +
+    h += '<div class="person">' + tav(t, e.paidBy) + '<div class="grow"><div><b>' + esc(e.title) + '</b></div><div class="small muted">' + esc(e.date || '') + ' · paid by ' + esc(me && e.paidBy === me.id ? 'you' : tnm(t, e.paidBy)) + '</div><div class="small muted">' + esc(splitText(t, e)) + (mine ? ' · your share <span class="mono">' + fmt(mine, e.currency) + '</span>' : '') + '</div></div><span class="mono" style="text-align:right">' + fmt(e.amount, e.currency) + (fx(e) ? '<span class="small muted" style="display:block">≈ ' + rmText(e.amount, e) + '</span>' : '') + '</span>' +
       ((e.hasReceipt || canEdit || e.mode === 'items') ? '<div class="acts" style="width:100%;padding-left:38px">' + (e.mode === 'items' && me ? '<button class="btn small primary" data-nav="/t/' + t.id + '/x/' + e.id + '">' + (mine ? 'Change what you ate' : 'Choose what you ate') + '</button>' : '') + (e.hasReceipt ? '<button class="btn small" data-act="treceipt" data-eid="' + e.id + '">Receipt</button>' : '') + (canEdit ? '<button class="btn small" data-nav="/t/' + t.id + '/e/' + e.id + '">Edit</button>' : '') + '</div>' : '') + '</div>';
   });
   return h + '</div>';
@@ -566,9 +601,11 @@ function tripPeopleHtml(t, me, bal) {
 
 // The add / edit expense form.
 function newExpense(t) {
-  var me = tmyId(t), among = {};
+  var me = tmyId(t), among = {}, last = t.expenses[t.expenses.length - 1];
   t.members.forEach(function (m) { among[m.id] = true; });
+  // A new expense starts in the same currency as the last one (a trip abroad usually stays in one currency).
   return { tripId: t.id, eid: null, title: '', date: new Date().toISOString().slice(0, 10), paidBy: me, amount: '', mode: 'equal', among: among, shares: {},
+    currency: last && fx(last) ? last.currency : 'MYR', rate: last && fx(last) ? String(last.rate) : '', rateNote: '',
     items: [{ name: '', qty: '1', price: '' }], service: '', sst: '', rounding: '', receipt: '', scanNote: '', scanning: false };
 }
 function expenseFrom(t, e) {
@@ -576,7 +613,7 @@ function expenseFrom(t, e) {
   e.among.forEach(function (id) { among[id] = true; if (e.mode === 'exact') shares[id] = fixed(e.shares[id] || 0); });
   if (e.mode === 'items') t.members.forEach(function (m) { among[m.id] = true; });
   var items = e.mode === 'items' ? e.items.map(function (i) { return { id: i.id, name: i.name, qty: String(i.qty), price: fixed(Math.round(i.price / i.qty)), line: i.price }; }) : [{ name: '', qty: '1', price: '' }];
-  return { tripId: t.id, eid: e.id, title: e.title, date: e.date, paidBy: e.paidBy, amount: fixed(e.amount), mode: e.mode, among: among, shares: shares,
+  return { tripId: t.id, eid: e.id, title: e.title, date: e.date, paidBy: e.paidBy, amount: fixed(e.amount), mode: e.mode, among: among, shares: shares, currency: e.currency || 'MYR', rate: fx(e) ? String(e.rate) : '', rateNote: '',
     items: items, service: e.service ? fixed(e.service) : '', sst: e.sst ? fixed(e.sst) : '', rounding: e.rounding ? fixed(e.rounding) : '', receipt: '', hadReceipt: e.hasReceipt, scanNote: '', scanning: false };
 }
 // Split by items: the dishes plus charges are the total.
@@ -584,6 +621,10 @@ function edTotal(d) {
   if (d.mode !== 'items') return toC(d.amount);
   var s = 0; d.items.forEach(function (i) { s += lineCents(i); });
   return s + toC(d.service) + toC(d.sst) + toC(d.rounding);
+}
+function eTotalHtml(d) {
+  var x = { currency: d.currency, rate: Number(d.rate) || 0 };
+  return '<b>Total ' + fmt(edTotal(d)) + '</b>' + (fx(x) && x.rate ? ' <span class="muted">≈ ' + rmText(edTotal(d), x) + '</span>' : '');
 }
 function edAmong(d) { return Object.keys(d.among).filter(function (id) { return d.among[id]; }); }
 function edRemain(d) { var s = 0; edAmong(d).forEach(function (id) { s += toC(d.shares[id]); }); return toC(d.amount) - s; }
@@ -598,18 +639,18 @@ function viewExpense() {
   var h = topbar() + '<button class="btn ghost" data-nav="/t/' + t.id + '">← ' + esc(t.title) + '</button><h2>' + (d.eid ? 'Edit expense' : 'Add expense') + '</h2>';
   h += '<div class="card"><h3>Receipt (optional)</h3><div class="drop"><div class="row">' + (d.receipt ? '<img class="thumb" src="' + d.receipt + '" alt="Receipt photo">' : '') + '<div><b>' + (d.receipt ? 'Receipt attached' : d.hadReceipt ? 'Receipt already attached' : 'Add a photo of the receipt') + '</b><div class="small muted">The dishes, total, shop name and date are read for you. Everyone in the trip can view the photo.</div></div></div><button class="btn" data-act="epick"' + (d.scanning ? ' disabled' : '') + '>' + (d.scanning ? 'Reading…' : d.receipt ? 'Change photo' : 'Choose photo') + '</button></div>' + (d.scanNote ? '<p class="small" style="color:var(--warn)">' + esc(d.scanNote) + '</p>' : '') + '</div>';
   h += '<div class="card"><h3>What and who paid</h3><div class="two"><div class="field"><label for="e-title">What was it</label><input type="text" id="e-title" data-ef="title" maxlength="80" value="' + esc(d.title) + '" placeholder="e.g. Hotel, dinner, petrol"></div><div class="field"><label for="e-date">Date</label><input type="date" id="e-date" data-ef="date" value="' + esc(d.date) + '"></div>' +
-    '<div class="field"><label for="e-amount">Total (RM)</label><input type="number" step="0.01" min="0" inputmode="decimal" id="e-amount" data-ef="amount" value="' + esc(d.mode === 'items' ? fixed(edTotal(d)) : d.amount) + '" placeholder="0.00"' + (d.mode === 'items' ? ' readonly title="Worked out from the items below"' : '') + '></div>' +
-    '<div class="field"><label for="e-paid">Paid by</label><select id="e-paid" data-ef="paidBy">' + t.members.map(function (m) { return '<option value="' + m.id + '"' + (m.id === d.paidBy ? ' selected' : '') + '>' + esc(m.name) + (m.id === tmyId(t) ? ' (you)' : '') + '</option>'; }).join('') + '</select></div></div></div>';
+    '<div class="field"><label for="e-amount">Total (' + CUR + ')</label><input type="number" step="0.01" min="0" inputmode="decimal" id="e-amount" data-ef="amount" value="' + esc(d.mode === 'items' ? fixed(edTotal(d)) : d.amount) + '" placeholder="0.00"' + (d.mode === 'items' ? ' readonly title="Worked out from the items below"' : '') + '></div>' +
+    '<div class="field"><label for="e-paid">Paid by</label><select id="e-paid" data-ef="paidBy">' + t.members.map(function (m) { return '<option value="' + m.id + '"' + (m.id === d.paidBy ? ' selected' : '') + '>' + esc(m.name) + (m.id === tmyId(t) ? ' (you)' : '') + '</option>'; }).join('') + '</select></div></div>' + currencyHtml(d, 'e') + '</div>';
   var modeBtn = function (m, label) { return '<button class="btn small' + (d.mode === m ? ' primary' : '') + '" data-act="emode" data-mode="' + m + '">' + label + '</button>'; };
   h += '<div class="card"><h3>Split</h3><div class="chips">' + modeBtn('items', 'By items') + modeBtn('equal', 'Equally') + modeBtn('exact', 'By exact amounts') + '</div>';
   if (d.mode === 'items') {
     // The dishes (from the receipt, or typed), then charges. After saving, everyone ticks what they ate.
-    h += '<div class="items"><div class="irow h"><span>Item</span><span>Qty</span><span>Each (RM)</span><span style="text-align:right">Total</span><span></span></div>';
+    h += '<div class="items"><div class="irow h"><span>Item</span><span>Qty</span><span>Each (' + CUR + ')</span><span style="text-align:right">Total</span><span></span></div>';
     d.items.forEach(function (it, i) { h += '<div class="irow"><input type="text" aria-label="Item name" data-ei="' + i + '" data-ek="name" value="' + esc(it.name) + '" placeholder="Item"><input type="number" min="1" aria-label="Quantity" data-ei="' + i + '" data-ek="qty" value="' + esc(it.qty) + '"><input type="number" step="0.01" min="0" inputmode="decimal" aria-label="Price of one" data-ei="' + i + '" data-ek="price" value="' + esc(it.price) + '" placeholder="0.00"><span class="mono small" data-eline="' + i + '">' + fmt(lineCents(it)) + '</span><button class="x" data-act="ermi" data-i="' + i + '" aria-label="Remove item">×</button></div>'; });
     h += '</div><div><button class="btn small" data-act="eaddi">Add item</button></div>';
-    h += '<div class="two"><div class="field"><label for="e-svc">Service charge (RM)</label><input type="number" step="0.01" id="e-svc" data-ef="service" value="' + esc(d.service) + '" placeholder="0.00"></div><div class="field"><label for="e-sst">SST (RM)</label><input type="number" step="0.01" id="e-sst" data-ef="sst" value="' + esc(d.sst) + '" placeholder="0.00"></div><div class="field"><label for="e-rnd">Rounding (RM)</label><input type="number" step="0.01" id="e-rnd" data-ef="rounding" value="' + esc(d.rounding) + '" placeholder="0.00"></div></div>';
+    h += '<div class="two"><div class="field"><label for="e-svc">Service charge (' + CUR + ')</label><input type="number" step="0.01" id="e-svc" data-ef="service" value="' + esc(d.service) + '" placeholder="0.00"></div><div class="field"><label for="e-sst">' + (CUR === 'MYR' ? 'SST' : 'Tax') + ' (' + CUR + ')</label><input type="number" step="0.01" id="e-sst" data-ef="sst" value="' + esc(d.sst) + '" placeholder="0.00"></div><div class="field"><label for="e-rnd">Rounding (' + CUR + ')</label><input type="number" step="0.01" id="e-rnd" data-ef="rounding" value="' + esc(d.rounding) + '" placeholder="0.00"></div></div>';
     h += '<div class="chips"><button class="btn small" data-act="esvc10">Service 10%</button><button class="btn small" data-act="esst6">SST 6%</button><button class="btn small" data-act="esst8">SST 8%</button></div>';
-    h += '<p class="small" id="eTotal"><b>Total ' + fmt(edTotal(d)) + '</b></p><p class="small muted">After saving, everyone in the trip taps the dishes they ate. Service charge and SST follow each person\'s dishes, and dishes nobody picks stay with whoever paid.</p></div>';
+    h += '<p class="small" id="eTotal">' + eTotalHtml(d) + '</p><p class="small muted">After saving, everyone in the trip taps the dishes they ate. Service charge and SST follow each person\'s dishes, and dishes nobody picks stay with whoever paid.</p></div>';
   } else {
   h += '<div class="chips"><button class="btn small" data-act="eall">Everyone</button><button class="btn small" data-act="enone">No one</button></div>';
   h += '<div class="receipt">';
@@ -639,15 +680,17 @@ async function startExpense(id, eid) {
 async function saveExpense() {
   var d = S.edraft, among = edAmong(d), shares = {}, body;
   if (!d.title.trim()) return toast('Say what the expense was');
+  var money = { currency: Currency.clean(d.currency), rate: Currency.cleanRate(d.currency, d.rate) };
+  if (!money.rate) return toast('Enter the exchange rate: how many ringgit 1 ' + money.currency + ' is worth');
   if (d.mode === 'items') {
     var items = d.items.filter(function (i) { return lineCents(i) > 0; }).map(function (i) { return { id: i.id, name: i.name, qty: Math.max(1, parseInt(i.qty, 10) || 1), price: lineCents(i) }; });
     if (!items.length) return toast('Add at least one item with a price');
-    body = { title: d.title, date: d.date, paidBy: d.paidBy, mode: 'items', items: items, service: toC(d.service), sst: toC(d.sst), rounding: toC(d.rounding), receipt: d.receipt ? b64(d.receipt) : undefined };
+    body = { title: d.title, date: d.date, paidBy: d.paidBy, currency: money.currency, rate: money.rate, mode: 'items', items: items, service: toC(d.service), sst: toC(d.sst), rounding: toC(d.rounding), receipt: d.receipt ? b64(d.receipt) : undefined };
   } else {
     if (toC(d.amount) <= 0) return toast('Enter the total');
     if (!among.length) return toast('Choose who shares it');
     if (d.mode === 'exact') { if (edRemain(d) !== 0) return toast('The amounts must add up to the total'); among.forEach(function (id) { shares[id] = toC(d.shares[id]); }); }
-    body = { title: d.title, date: d.date, paidBy: d.paidBy, amount: toC(d.amount), mode: d.mode, among: among, shares: shares, receipt: d.receipt ? b64(d.receipt) : undefined };
+    body = { title: d.title, date: d.date, paidBy: d.paidBy, currency: money.currency, rate: money.rate, amount: toC(d.amount), mode: d.mode, among: among, shares: shares, receipt: d.receipt ? b64(d.receipt) : undefined };
   }
   try {
     var j = await api(d.eid ? 'PUT' : 'POST', '/api/trips/' + d.tripId + '/expenses' + (d.eid ? '/' + d.eid : ''), body, ttok(d.tripId));
@@ -660,7 +703,7 @@ async function saveExpense() {
 async function scanExpense(f) {
   var d = S.edraft; d.scanning = true; d.scanNote = ''; render();
   try {
-    var r = await readOnPhone(f), sum = r.service + r.sst + r.rounding;
+    var r = await readOnPhone(f, d.currency), sum = r.service + r.sst + r.rounding, switched = abroadFrom(d, r);
     r.items.forEach(function (i) { sum += i.line; });
     var total = r.total || sum;
     if (!total) throw new Error('empty');
@@ -673,8 +716,8 @@ async function scanExpense(f) {
       d.items = r.items.map(function (i) { return { name: i.name, qty: String(i.qty), price: fixed(i.each), line: i.line }; });
       d.service = r.service ? fixed(r.service) : ''; d.sst = r.sst ? fixed(r.sst) : ''; d.rounding = r.rounding ? fixed(r.rounding) : '';
       var gap = r.total ? r.total - edTotal(d) : 0;
-      d.scanNote = 'Read ' + r.items.length + ' item' + (r.items.length > 1 ? 's' : '') + (r.merchant ? ' at ' + r.merchant : '') + (Math.abs(gap) > 1 ? '. They come to ' + fmt(edTotal(d)) + ' but the receipt says ' + fmt(r.total) + ', so check the items.' : ', matching the total of ' + fmt(edTotal(d)) + '.') + ' Please check them against the receipt.';
-    } else d.scanNote = 'Read a total of ' + fmt(total) + (r.merchant ? ' at ' + r.merchant : '') + '. Please check it against the receipt.';
+      d.scanNote = switched + 'Read ' + r.items.length + ' item' + (r.items.length > 1 ? 's' : '') + (r.merchant ? ' at ' + r.merchant : '') + (Math.abs(gap) > 1 ? '. They come to ' + fmt(edTotal(d)) + ' but the receipt says ' + fmt(r.total) + ', so check the items.' : ', matching the total of ' + fmt(edTotal(d)) + '.') + ' Please check them against the receipt.';
+    } else d.scanNote = switched + 'Read a total of ' + fmt(total) + (r.merchant ? ' at ' + r.merchant : '') + '. Please check it against the receipt.';
   } catch (e) { d.scanNote = 'Could not read the total. Type it in.'; }
   d.scanning = false; render();
 }
@@ -743,12 +786,13 @@ function expenseInput(t) {
     var ix = +t.getAttribute('data-ei'), it = d.items[ix], k = t.getAttribute('data-ek'); it[k] = t.value;
     if (k !== 'name') delete it.line;
     var ce = document.querySelector('[data-eline="' + ix + '"]'); if (ce) ce.textContent = fmt(lineCents(it));
-  } else if (t.hasAttribute('data-ef')) d[t.getAttribute('data-ef')] = t.value;
+  } else if (t.getAttribute('data-ef') === 'currency') { if (d.currency !== t.value) { d.currency = t.value; d.rate = ''; d.rateNote = ''; fillRate(d); } return true; }
+  else if (t.hasAttribute('data-ef')) d[t.getAttribute('data-ef')] = t.value;
   else if (t.hasAttribute('data-share')) d.shares[t.getAttribute('data-share')] = t.value;
   else if (t.hasAttribute('data-among')) { d.among[t.getAttribute('data-among')] = t.checked; render(); return true; }
   else return false;
   var el = $('#eRemain'); if (el) el.innerHTML = remainHtml(d);
-  if (d.mode === 'items') { var tt = $('#eTotal'), am = $('#e-amount'); if (tt) tt.innerHTML = '<b>Total ' + fmt(edTotal(d)) + '</b>'; if (am) am.value = fixed(edTotal(d)); }
+  if (d.mode === 'items') { var tt = $('#eTotal'), am = $('#e-amount'); if (tt) tt.innerHTML = eTotalHtml(d); if (am) am.value = fixed(edTotal(d)); }
   return true;
 }
 
@@ -765,7 +809,7 @@ function viewPicks() {
   var c = Settle.itemsCalc(e), others = canPickFor(t, me, e), ac = others && S.pickAs && tmem(t, S.pickAs) ? S.pickAs : meId;
   var picks = (e.picks && e.picks[ac]) || [], my = c.per[ac];
   var h = topbar() + '<button class="btn ghost" data-nav="/t/' + t.id + '">← ' + esc(t.title) + '</button>';
-  h += '<div class="row between" style="align-items:flex-start"><div class="grow"><h2>' + esc(e.title) + '</h2><div class="small muted">' + esc(e.date || '') + ' · paid by ' + esc(e.paidBy === meId ? 'you' : tnm(t, e.paidBy)) + '</div></div><div class="mono" style="font-size:20px">' + fmt(e.amount) + '</div></div>';
+  h += '<div class="row between" style="align-items:flex-start"><div class="grow"><h2>' + esc(e.title) + '</h2><div class="small muted">' + esc(e.date || '') + ' · paid by ' + esc(e.paidBy === meId ? 'you' : tnm(t, e.paidBy)) + '</div></div><div style="text-align:right"><div class="mono" style="font-size:20px">' + fmt(e.amount) + '</div>' + (fx(e) ? '<div class="small muted mono">≈ ' + rmText(e.amount, e) + '</div>' : '') + '</div></div>';
   if (others) h += '<div class="card"><h3>Picking for</h3><div class="chips">' + t.members.map(function (m) { return '<button class="btn small' + (m.id === ac ? ' primary' : '') + '" data-act="xas" data-uid="' + m.id + '">' + esc(m.id === meId ? 'You' : m.name) + '</button>'; }).join('') + '</div><p class="small muted">Tap a name, then tap the dishes that person ate. A dish picked by 2 or more people is split equally.</p></div>';
   h += '<div class="card"><div class="row between"><h3>' + (ac === meId ? 'Tap what you ate' : 'Tap what ' + esc(tnm(t, ac)) + ' ate') + '</h3>' + (e.hasReceipt ? '<button class="btn small" data-act="treceipt" data-eid="' + e.id + '">View receipt</button>' : '') + '</div><div class="receipt">';
   e.items.forEach(function (it) {
@@ -784,7 +828,7 @@ function viewPicks() {
     if (my.svc) h += '<div class="chg"><span>Service charge</span><span>' + fmt(my.svc) + '</span></div>';
     if (my.sst) h += '<div class="chg"><span>SST</span><span>' + fmt(my.sst) + '</span></div>';
     if (my.rnd) h += '<div class="chg"><span>Rounding</span><span>' + fmt(my.rnd) + '</span></div>';
-    h += '<div class="chg tot"><span>Total</span><span class="big" style="font-size:22px">' + fmt(my.total) + '</span></div></div><p class="small muted">This is added to the trip. You pay it when settling up at the end, not now.</p></div>';
+    h += '<div class="chg tot"><span>Total</span><span class="big" style="font-size:22px">' + fmt(my.total) + '</span></div>' + (fx(e) ? '<div class="chg tot"><span>In ringgit<span class="small" style="display:block;color:var(--muted);font-weight:400">' + esc(rateText(e)) + '</span></span><span class="big" style="font-size:22px">' + rmText(my.total, e) + '</span></div>' : '') + '</div><p class="small muted">This is added to the trip. You pay it when settling up at the end, not now.</p></div>';
   } else if (ac === meId) h += '<div class="card"><p class="muted">Tap the dishes you ate above. Your share, with service charge and SST, appears here and is added to the trip.</p></div>';
   h += '<div class="row" style="flex-wrap:wrap"><button class="btn primary" data-nav="/t/' + t.id + '">Done</button>' + (me.isOwner || e.addedBy === meId ? '<button class="btn small" data-nav="/t/' + t.id + '/e/' + e.id + '">Edit items</button>' : '') + '</div>';
   return h;
@@ -830,7 +874,7 @@ function summaryCanvas(b) {
     tl.forEach(function (l) { if (draw) { x.fillStyle = SUM.ink; x.fillText(l, P, y + 50); } y += 62; });
     x.font = '400 28px ' + SUM.body; if (draw) { x.fillStyle = SUM.muted; x.fillText((b.date ? b.date + ' · ' : '') + 'paid by ' + nm(b, b.payerId), P, y + 30); }
     y += 52;
-    x.font = '600 40px ' + SUM.mono; if (draw) { x.fillStyle = SUM.ink; x.fillText('Total ' + fmt(c.total), P, y + 40); }
+    x.font = '600 40px ' + SUM.mono; if (draw) { x.fillStyle = SUM.ink; x.fillText('Total ' + fmt(c.total) + (fx(b) ? ' ≈ ' + rmText(c.total, b) : ''), P, y + 40); }
     y += 76;
     // One card per person
     rows.forEach(function (r) {
@@ -839,7 +883,7 @@ function summaryCanvas(b) {
       if (draw) {
         x.fillStyle = SUM.card; x.fillRect(P, y, W - 2 * P, h); x.fillStyle = r.color; x.fillRect(P, y, 8, h);
         x.font = '700 32px ' + SUM.body; x.fillStyle = SUM.ink; x.textAlign = 'left'; x.fillText(r.name, P + 32, y + 32 + 30);
-        x.font = '600 32px ' + SUM.mono; x.textAlign = 'right'; x.fillText(fmt(r.amount), W - P - 32, y + 32 + 30);
+        x.font = '600 32px ' + SUM.mono; x.textAlign = 'right'; x.fillText(fx(b) ? rmText(r.amount, b) : fmt(r.amount), W - P - 32, y + 32 + 30);
         x.font = '600 24px ' + SUM.body; x.fillStyle = r.color; x.fillText(r.status, W - P - 32, y + 32 + 64);
         x.textAlign = 'left'; x.font = '400 26px ' + SUM.body; x.fillStyle = SUM.muted;
         dl.forEach(function (l, i) { x.fillText(l, P + 32, y + 32 + 40 + 28 + i * 34); });
@@ -912,7 +956,8 @@ function blackWhite(c) {
   x.putImageData(window.ReceiptParse.binarize(x.getImageData(0, 0, d.width, d.height)), 0, 0);
   return d;
 }
-async function readOnPhone(file) {
+// `currency`: the bill's currency if already chosen (prices in dong or yen have no cents).
+async function readOnPhone(file, currency) {
   var bmp = await createImageBitmap(file), c = photoCanvas(bmp, 0);
   var P = window.ReceiptParse, w = await ocrWorker(), r = null, n = 0;
   // Each try is read twice, from the text as Tesseract lines it up and from word positions; the reading that adds up best wins.
@@ -920,7 +965,8 @@ async function readOnPhone(file) {
     ocrTry = ++n > 1 ? ' (try ' + n + ')' : '';
     await w.setParameters({ tessedit_pageseg_mode: psm });
     var out = (await w.recognize(canvas, {}, { text: true, blocks: true })).data;
-    r = P.best([r, P.parse(out.text), P.parse(P.rowsFromBlocks(out.blocks))]);
+    var o = { currency: currency };
+    r = P.best([r, P.parse(out.text, o), P.parse(P.rowsFromBlocks(out.blocks), o)]);
     return out;
   };
   try {
@@ -986,8 +1032,8 @@ async function checkSlips(b) {
         if (!r.ok) throw new Error('slip');
         var w = await ocrWorker();
         await w.setParameters({ tessedit_pageseg_mode: '3' });
-        var c = window.ReceiptParse.checkSlip((await w.recognize(await r.blob())).data.text, m.pay.amount);
-        S.slipChecks[m.id] = { slipAt: m.pay.slipAt, expected: m.pay.amount, result: c.result, amount: c.amount };
+        var c = window.ReceiptParse.checkSlip((await w.recognize(await r.blob())).data.text, rmOf(m.pay.amount, b));
+        S.slipChecks[m.id] = { slipAt: m.pay.slipAt, expected: m.pay.amount, expectedRM: rmOf(m.pay.amount, b), result: c.result, amount: c.amount };
       } catch (e) { S.slipChecks[m.id] = { slipAt: m.pay.slipAt, expected: m.pay.amount, result: 'unread' }; }
       render();
     }
@@ -997,8 +1043,8 @@ function slipCheckHtml(m) {
   var c = S.slipChecks[m.id];
   if (!c || c.slipAt !== m.pay.slipAt) return '';
   if (c.result === 'pending') return '<div class="small muted">Checking the slip…</div>';
-  if (c.result === 'match') return '<div class="small" style="color:var(--good);font-weight:700">✓ Slip shows ' + fmt(c.amount) + ', matches</div>';
-  if (c.result === 'mismatch') return '<div class="small" style="color:var(--warn);font-weight:700">Slip shows ' + fmt(c.amount) + ', expected ' + fmt(c.expected) + '. View the slip.</div>';
+  if (c.result === 'match') return '<div class="small" style="color:var(--good);font-weight:700">✓ Slip shows ' + fmt(c.amount, 'MYR') + ', matches</div>';
+  if (c.result === 'mismatch') return '<div class="small" style="color:var(--warn);font-weight:700">Slip shows ' + fmt(c.amount, 'MYR') + ', expected ' + fmt(c.expectedRM != null ? c.expectedRM : c.expected, 'MYR') + '. View the slip.</div>';
   return '<div class="small muted">Could not read the amount. View the slip to check.</div>';
 }
 function matchingSlips(b) {
@@ -1010,14 +1056,21 @@ async function confirmMatching(b) {
   render(); toast(list.length + ' payment' + (list.length > 1 ? 's' : '') + ' confirmed');
 }
 
+// A receipt in another currency, read while the form is still in ringgit: switch to it and fetch today's rate.
+function abroadFrom(d, r) {
+  if (!r.currency || r.currency === d.currency || (d.currency && d.currency !== 'MYR')) return '';
+  d.currency = r.currency; d.rate = ''; d.rateNote = ''; CUR = r.currency; fillRate(d);
+  return 'This receipt is in ' + r.currency + ', so the currency was switched. ';
+}
 async function doScan() {
   var d = S.draft; if (!d.scanFile || S.scanning) return;
   S.scanning = true; d.scanNote = ''; render();
   try {
     var r = null;
     if (S.cfg.scan) { try { r = await api('POST', '/api/scan', { image: b64(await toJpeg(d.scanFile, 1400, 600000)) }); } catch (e) { r = null; } }
-    if (!r || !r.items.length) r = await readOnPhone(d.scanFile);
+    if (!r || !r.items.length) r = await readOnPhone(d.scanFile, d.currency);
     if (!r.items.length) throw new Error('empty');
+    var switched = abroadFrom(d, r);
     d.items = r.items.map(function (i) { return { name: i.name, qty: String(i.qty), price: fixed(i.each), line: i.line }; });
     d.service = r.service ? fixed(r.service) : ''; d.sst = r.sst ? fixed(r.sst) : ''; d.rounding = r.rounding ? fixed(r.rounding) : '';
     if (r.merchant && (!d.title || d.title === d.scanTitle)) d.title = d.scanTitle = r.merchant;
@@ -1027,9 +1080,9 @@ async function doScan() {
     // Prices worked out from the receipt's totals (not read directly) are named so the payer can check them.
     var worked = r.filled ? ' ' + (r.filled === 1 ? 'One price was' : r.filled + ' prices were') + ' unreadable and worked out from the receipt total: ' +
       r.items.filter(function (i) { return i.filled; }).map(function (i) { return i.name + ' (' + fmt(i.line) + ')'; }).join(', ') + '.' : '';
-    d.scanNote = !r.total ? 'Read ' + r.items.length + ' items coming to ' + fmt(draftTotal(d)) + ', but the receipt total could not be read. Please check the items and charges against the receipt.'
+    d.scanNote = switched + (!r.total ? 'Read ' + r.items.length + ' items coming to ' + fmt(draftTotal(d)) + ', but the receipt total could not be read. Please check the items and charges against the receipt.'
       : Math.abs(gap) > 1 ? 'Read ' + r.items.length + ' items. They come to ' + fmt(draftTotal(d)) + ' but the receipt says ' + fmt(r.total) + ', so ' + fmt(Math.abs(gap)) + (gap > 0 ? ' is missing or misread' : ' too much was read') + '. Please check the items against the receipt.'
-      : 'Read ' + r.items.length + ' items, matching the receipt total of ' + fmt(draftTotal(d)) + '.' + worked + ' Please check them against the receipt.';
+      : 'Read ' + r.items.length + ' items, matching the receipt total of ' + fmt(draftTotal(d)) + '.' + worked + ' Please check them against the receipt.');
   } catch (e) { d.scanNote = e.status === 429 ? 'Too many scans for now. Type the items instead.' : 'Could not read that receipt. Try a clearer, flatter photo, or type the items.'; }
   S.scanning = false; render();
 }
@@ -1039,16 +1092,18 @@ async function createBill() {
   if (!d.payerName.trim()) return toast('Enter your name');
   var items = d.items.filter(function (i) { return lineCents(i) > 0; }).map(function (i) { return { id: i.id, name: i.name, qty: Math.max(1, parseInt(i.qty, 10) || 1), price: lineCents(i) }; });
   if (!items.length) return toast('Add at least one item with an amount');
+  var money = { currency: Currency.clean(d.currency), rate: Currency.cleanRate(d.currency, d.rate) };
+  if (!money.rate) return toast('Enter the exchange rate: how many ringgit 1 ' + money.currency + ' is worth');
   S.creating = true; render();
   if (d.editId) {
     try {
-      var j = await api('PUT', '/api/bills/' + d.editId, { title: d.title, date: d.date, items: items, service: toC(d.service), sst: toC(d.sst), rounding: toC(d.rounding) }, tok(d.editId));
+      var j = await api('PUT', '/api/bills/' + d.editId, { title: d.title, date: d.date, currency: money.currency, rate: money.rate, items: items, service: toC(d.service), sst: toC(d.sst), rounding: toC(d.rounding) }, tok(d.editId));
       var eid = d.editId; S.draft = null; S.creating = false; S.bill = j.bill; toast('Bill updated'); nav('/b/' + eid);
     } catch (e) { S.creating = false; toast(e.message); render(); }
     return;
   }
   try {
-    var r = await api('POST', '/api/bills', { title: d.title, date: d.date, payerName: d.payerName, items: items, service: toC(d.service), sst: toC(d.sst), rounding: toC(d.rounding), qr: b64(d.qr), receipt: b64(d.receipt) });
+    var r = await api('POST', '/api/bills', { title: d.title, date: d.date, payerName: d.payerName, currency: money.currency, rate: money.rate, items: items, service: toC(d.service), sst: toC(d.sst), rounding: toC(d.rounding), qr: b64(d.qr), receipt: b64(d.receipt) });
     S.store.bills[r.id] = { token: r.token, memberId: r.memberId, title: d.title }; S.store.name = d.payerName.trim(); saveStore();
     S.draft = null; clearDraft(); S.creating = false; toast('Bill created. Send the link to your friends.'); nav('/b/' + r.id);
   } catch (e) { S.creating = false; toast(e.message); render(); }
@@ -1139,6 +1194,7 @@ document.addEventListener('click', function (e) {
 document.addEventListener('input', function (e) {
   if (S.view === 'expense') { expenseInput(e.target); return; }
   var t = e.target, d = S.draft; if (!d || S.view !== 'new') return;
+  if (t.getAttribute('data-f') === 'currency') { d.currency = t.value; d.rate = ''; d.rateNote = ''; saveDraft(); fillRate(d); return; }
   if (t.hasAttribute('data-f')) d[t.getAttribute('data-f')] = t.value;
   else if (t.hasAttribute('data-i')) {
     var ix = +t.getAttribute('data-i'), it = d.items[ix]; it[t.getAttribute('data-k')] = t.value;

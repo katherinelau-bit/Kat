@@ -4,7 +4,7 @@
   if (typeof module === 'object' && module.exports) module.exports = m; else root.ReceiptParse = m;
 })(typeof self !== 'undefined' ? self : this, function () {
   // A money amount at the end of a line, optionally "RM", negative or in brackets, then maybe a tax code like "SR" or a stray "|".
-  var AMOUNT_STRICT = /(?:^|[^\d.,])(\(?-?\s*(?:RM\s*)?-?\d{1,5}[.,]\s?\d{2}\)?)\s*(?:[A-Z*]{1,2})?\s*\|?\s*$/i;
+  var AMOUNT_STRICT = /(?:^|[^\d.,])(\(?-?\s*(?:RM\s*)?-?\d{1,7}[.,]\s?\d{2}\)?)\s*(?:[A-Z*]{1,2})?\s*\|?\s*$/i;
   // Faded receipts lose the decimal point: "17 80", "10:90" or "1590" also count, but only when the reading then adds up.
   var AMOUNT_LOOSE = /(?:^|[^\d.,:])(\(?-?\s*(?:RM\s*)?-?(?:\d{1,5}[.,:]\s?\d{2}|\d{1,4} \d{2}|\d{3,5}))\)?\s*(?:[A-Z*]{1,2})?\s*\|?\s*$/i;
   var NOT_READ = 'Item not read (check receipt)';
@@ -16,10 +16,11 @@
   var DISH_CODE = /^(?:\d{1,2}\s+)?(?:[A-Za-z]{1,2}\s+)?[A-Z]{1,3}\s?[0-9O]?\d[0-9O]?\s*[A-Za-z]{2}/;
   var SKIP = /sub\s*-?\s*total|jumlah\s*kecil|sub\s*-?\s*jumlah|cash|tunai|change|baki|balance|paid|tender|card|visa|master|amex|debit|credit|e-?wallet|tng|touch\s*n|grab\s*pay|boost|duitnow|qr\s*pay|item\s*count|no\.?\s*of\s*items|\bqty\b|discount|diskaun|voucher|deposit|\btel\b|phone|fax|invoice|receipt\s*no|bill\s*no|order\s*no|\btable\b|\bpax\b|cashier|\bdate\b|\btime\b|base\s*amt|summary/i;
   // Labels can lose their first letters at a curled edge ("ST (6%)", "RVICE CHARGE"), so these match fragments too.
-  var SST = /\bs?st\b|\bgst\b|service\s*tax|\btax\b|cukai/i;
+  var SST = /\bs?st\b|\bgst\b|service\s*tax|\btax\b|cukai|\bvat\b|\bppn\b|\bpb1\b|\bthue\b/i;
   var SERVICE = /serv|rvice|svc|s\/c|charge|caj|perkhidmatan/i;
   var ROUNDING = /round|bundar/i;
-  var TOTAL = /total|jumlah|amount\s*due|nett|grand|\(myr\)|\(rm\)/i;
+  // Also Vietnamese "tổng cộng / thanh toán" and "tổng tiền", as the reader prints them without accents.
+  var TOTAL = /total|jumlah|amount\s*due|nett|grand|\(myr\)|\(rm\)|t[oổ]ng\s*c[oộ]ng|t[oổ]ng\s*ti[eề]n|thanh\s*to[aá]n/i;
   // Add-ons printed under a dish ("• Thigh + 1.00"); their price is already in the dish's line.
   var MODIFIER = /^[^A-Za-z0-9(]*[+•·®*]|\+\s*$/;
   // "(8.90/ea)" or "(7.90/" : the price of one, printed beside or under a dish.
@@ -313,7 +314,38 @@
     return true;
   }
 
-  function parse(text) {
+  // Receipts from abroad: which currency, by its signs and codes (none found: ringgit). Used to pick the bill's currency.
+  // Signs and codes only: a place name ("Bangkok Kitchen" in KL) says nothing about the currency.
+  var MARKS = [['MYR', /\bRM\s?\d|\bMYR\b|\bSST\b|\bcukai\b/gi], ['SGD', /S\$|\bSGD\b/g], ['THB', /฿|\bTHB\b|\bbaht\b/gi], ['CNY', /\bRMB\b|\bCNY\b|￥|元/g],
+    ['VND', /₫|\bVND\b|\d\s?đ(?=\s|$)/gim], ['IDR', /\bIDR\b|\bRp\.?\s?\d/g], ['USD', /US\$|\bUSD\b/g], ['EUR', /€|\bEUR\b/g], ['GBP', /£|\bGBP\b/g],
+    ['JPY', /\bJPY\b|円/g], ['KRW', /₩|\bKRW\b/g], ['HKD', /HK\$|\bHKD\b/g], ['TWD', /NT\$|\bTWD\b/g], ['AUD', /A\$|\bAUD\b/g], ['PHP', /₱|\bPHP\b/g]];
+  function detectCurrency(text) {
+    var best = 'MYR', top = 0;
+    MARKS.forEach(function (m) { var n = (String(text || '').match(m[1]) || []).length; if (n > top) { top = n; best = m[0]; } });
+    return top ? best : '';
+  }
+  var WHOLE = { VND: 1, IDR: 1, JPY: 1, KRW: 1, TWD: 1 };
+  // Prices abroad: currency signs and codes around numbers go; in currencies without cents (dong, rupiah, yen, won)
+  // "150.000", "65,000" or "65000" are whole amounts, written as "150000.00" so the ringgit rules read them.
+  function normalise(text, cur) {
+    var t = String(text || '').replace(/(S\$|US\$|HK\$|NT\$|A\$|\$|฿|￥|¥|€|£|₫|₩|₱)\s*(?=-?\d)/g, '')
+      .replace(/\b(?:SGD|THB|USD|EUR|GBP|CNY|RMB|VND|IDR|JPY|KRW|HKD|TWD|AUD|PHP|Rp\.?)\s*(?=-?\d)/g, '')
+      .replace(/(\d)\s*(?:₫|đ|VND|vnd|THB|SGD|USD|EUR|IDR|JPY|KRW|円|元)(?=\s|$)/g, '$1');
+    if (!WHOLE[cur]) return t;
+    return t.split(/\r?\n/).map(function (l) {
+      return l.replace(/(^|[^\d.,])(\d{1,3}(?:[.,]\d{3})+)(?![.,]?\d)/g, function (m, pre, n) { return pre + n.replace(/[.,]/g, '') + '.00'; })
+        .replace(/(^|[^\d.,])(\d{3,9})(?=\s*$|\s+\d)/g, function (m, pre, n) { return pre + n + '.00'; });
+    }).join('\n');
+  }
+
+  // `opts.currency`: the bill's currency, if the person already chose one; otherwise it is read off the receipt.
+  function parse(text, opts) {
+    var cur = (opts && opts.currency && opts.currency !== 'MYR' ? opts.currency : '') || detectCurrency(text) || 'MYR';
+    var r = parseText(cur === 'MYR' ? text : normalise(text, cur));
+    if (cur !== 'MYR') r.currency = cur;
+    return r;
+  }
+  function parseText(text) {
     var strict = parseWith(text, AMOUNT_STRICT), each = parseEach(text, AMOUNT_STRICT);
     // Prices worked out from "(x/ea)" notes win when they add up; they do not depend on the price column at all.
     if (each && balanced(each)) return done(each);
@@ -421,5 +453,5 @@
     return all.length ? { result: 'mismatch', amount: all[0] } : { result: 'unread', amount: 0 };
   }
 
-  return { parse: parse, rowsFromBlocks: rowsFromBlocks, tilt: tilt, binarize: binarize, best: best, balanced: balanced, goodEnough: goodEnough, slipAmounts: slipAmounts, checkSlip: checkSlip };
+  return { parse: parse, detectCurrency: detectCurrency, rowsFromBlocks: rowsFromBlocks, tilt: tilt, binarize: binarize, best: best, balanced: balanced, goodEnough: goodEnough, slipAmounts: slipAmounts, checkSlip: checkSlip };
 });

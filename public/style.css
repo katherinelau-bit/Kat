@@ -82,7 +82,7 @@ button.ln:hover{background:var(--bg)}
 .pay>div:last-child{flex:1 1 220px}
 .field{display:flex;flex-direction:column;gap:4px;min-width:0}
 .field label{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
-input[type=text],input[type=date],input[type=number],input[type=search]{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
+.field select,input[type=text],input[type=date],input[type=number],input[type=search]{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
 .items{display:flex;flex-direction:column;gap:8px}
 .irow{display:grid;grid-template-columns:minmax(0,1fr) 48px 76px 76px 28px;gap:6px;align-items:center}
 .irow.h{font-size:12px;color:var(--muted);font-weight:600}
