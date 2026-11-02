@@ -4,7 +4,7 @@ services:
     name: bei-cin-lah
     runtime: node
     plan: starter            # a persistent disk needs a paid instance
-    buildCommand: echo "nothing to build"
+    buildCommand: npm install && node scripts/copy-ocr.js   # installs and copies the on-phone receipt reader
     startCommand: node server.js
     envVars:
       - key: NODE_VERSION
