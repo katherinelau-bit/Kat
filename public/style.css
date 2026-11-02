@@ -78,6 +78,8 @@ button.ln:hover{background:var(--bg)}
 .qr{max-width:240px;width:100%;border-radius:12px;border:1px solid var(--line);background:#fff;display:block}
 .pay{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
 .pay>div{min-width:0}
+/* The text beside the QR needs room to read; when the screen is too narrow it moves under the QR instead of squeezing. */
+.pay>div:last-child{flex:1 1 220px}
 .field{display:flex;flex-direction:column;gap:4px;min-width:0}
 .field label{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
 input[type=text],input[type=date],input[type=number],input[type=search]{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
