@@ -17,7 +17,9 @@ You need a free GitHub account and a free Netlify account. About 10 minutes.
    and send the bill link to your friends. You can change the address under Site configuration > Domain management.
 4. **Receipt reading is free and already on.** When the payer chooses a receipt photo, the phone reads it
    (Tesseract.js, no account or key) and fills in the item names, quantities, prices, service charge, SST and
-   rounding. It works best on a flat, well-lit, straight photo; always check the items before creating the bill.
+   rounding. Small photos are enlarged, tilted ones straightened, and a shadow-free black-and-white copy is tried
+   when the first reading does not add up to the printed total, so a scan can take 10 to 40 seconds. It works best
+   on a flat, well-lit photo; always check the items before creating the bill.
    The first scan on a phone downloads about 8 MB once; later scans are instant and work offline.
    Optional: for messier receipts, add an `ANTHROPIC_API_KEY` in Netlify (Site configuration > Environment
    variables) and redeploy. Claude then reads receipts first (a few sen per scan) and the phone takes over if it fails.

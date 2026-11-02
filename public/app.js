@@ -804,37 +804,59 @@ function saveSummary() {
 /* ---------- receipt reading ----------
  * Free and on the phone with Tesseract.js (served from /ocr, loaded on first use, language file cached by the browser).
  * If the server's Claude reader is switched on it is tried first, and the phone takes over if it fails. */
-var ocr = null;
+var ocr = null, ocrTry = '';
 function loadScript(src) { return new Promise(function (ok, no) { var s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); }); }
 function scanLabel(t) { var b = document.querySelector('[data-act="scan"]'); if (b) b.textContent = t; }
 function ocrWorker() {
   if (!ocr) ocr = (async function () {
     if (!window.Tesseract) await loadScript('/ocr/tesseract.min.js');
     var w = await window.Tesseract.createWorker('eng', 1, { workerPath: '/ocr/worker.min.js', corePath: '/ocr', langPath: '/ocr', workerBlobURL: false, gzip: true,
-      logger: function (m) { scanLabel(m.status === 'recognizing text' ? 'Reading… ' + Math.round(m.progress * 100) + '%' : 'Getting ready…'); } });
+      logger: function (m) { scanLabel(m.status === 'recognizing text' ? 'Reading' + ocrTry + '… ' + Math.round(m.progress * 100) + '%' : 'Getting ready…'); } });
     await w.setParameters({ preserve_interword_spaces: '1' });
     return w;
   })().catch(function (e) { ocr = null; throw e; });
   return ocr;
 }
-async function readOnPhone(file) {
-  var bmp = await createImageBitmap(file);
-  // The photo goes in as taken, only shrunk if it is very large: Tesseract's own black-and-white step copes with
-  // coloured paper and shadows better than a grey or high-contrast version (tested on an orange receipt).
-  var s = Math.min(1, 2200 / Math.max(bmp.width, bmp.height));
-  var c = document.createElement('canvas'); c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+// The photo at 2400px on its long side: small ones (saved from WhatsApp) are enlarged so the letters are big enough
+// to read, very large ones shrunk. Turned by `angle` (radians) about the centre to straighten a tilted receipt.
+function photoCanvas(bmp, angle) {
+  var s = 2400 / Math.max(bmp.width, bmp.height), c = document.createElement('canvas');
+  c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
   var x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
-  x.drawImage(bmp, 0, 0, c.width, c.height);
-  var P = window.ReceiptParse, w = await ocrWorker(), r = null;
-  // Layout mode 6 (one block of text) usually keeps an item and its price together; mode 4 (one column) is the second try.
-  // Each pass is read twice, from the text as Tesseract lines it up and from word positions, and the reading that adds up best wins.
-  for (var psm of ['6', '4']) {
+  x.imageSmoothingQuality = 'high';
+  x.translate(c.width / 2, c.height / 2); x.rotate(angle || 0);
+  x.drawImage(bmp, -c.width / 2, -c.height / 2, c.width, c.height);
+  return c;
+}
+function blackWhite(c) {
+  var d = document.createElement('canvas'); d.width = c.width; d.height = c.height;
+  var x = d.getContext('2d'); x.drawImage(c, 0, 0);
+  x.putImageData(window.ReceiptParse.binarize(x.getImageData(0, 0, d.width, d.height)), 0, 0);
+  return d;
+}
+async function readOnPhone(file) {
+  var bmp = await createImageBitmap(file), c = photoCanvas(bmp, 0);
+  var P = window.ReceiptParse, w = await ocrWorker(), r = null, n = 0;
+  // Each try is read twice, from the text as Tesseract lines it up and from word positions; the reading that adds up best wins.
+  var read = async function (canvas, psm) {
+    ocrTry = ++n > 1 ? ' (try ' + n + ')' : '';
     await w.setParameters({ tessedit_pageseg_mode: psm });
-    var out = (await w.recognize(c, {}, { text: true, blocks: true })).data;
+    var out = (await w.recognize(canvas, {}, { text: true, blocks: true })).data;
     r = P.best([r, P.parse(out.text), P.parse(P.rowsFromBlocks(out.blocks))]);
-    if (P.goodEnough(r)) break;
-  }
-  return r;
+    return out;
+  };
+  try {
+    // First the photo as taken, in layout mode 6 (one block of text), which usually keeps a dish and its price together.
+    var first = await read(c, '6');
+    if (P.goodEnough(r)) return r;
+    // Then straightened if it is tilted more than 2°, and a black-and-white copy that drops shadows and folds,
+    // each also in layout mode 4 (one column). It stops as soon as a reading adds up.
+    var a = P.tilt(first.blocks), turned = Math.abs(a) > 0.035;
+    if (turned) c = photoCanvas(bmp, -a);
+    var bw = blackWhite(c), tries = (turned ? [[c, '6']] : []).concat([[bw, '6'], [c, '4'], [bw, '4']]);
+    for (var k = 0; k < tries.length; k++) { await read(tries[k][0], tries[k][1]); if (P.goodEnough(r)) break; }
+    return r;
+  } finally { ocrTry = ''; }
 }
 /* ---------- notifications ("ring me when someone pays") ----------
  * The payer's phone subscribes once per bill; the server sends "Victor sent RM 25.40" when a slip arrives.

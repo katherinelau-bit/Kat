@@ -274,6 +274,43 @@ AEE Er REL BR VT      ig`;
   console.log('passed: payment slip amounts');
 }
 
+// Real receipt photos that used to read badly, exactly as the phone reader saw them after the photo clean-up
+// (test-receipts.json). Each must give every dish's price and add up to the printed total to the sen.
+function realReceipts() {
+  const { parse } = require('./public/receipt-parse.js');
+  for (const c of require('./test-receipts.json')) {
+    const r = parse(c.text);
+    assert.deepEqual(r.items.map((i) => i.line), c.lines, c.receipt);
+    assert.ok(r.items.every((i) => /[A-Za-z]{3}/.test(i.name)), c.receipt + ': dish names');
+    if (c.sst !== undefined) assert.equal(r.sst, c.sst, c.receipt + ': SST from its printed rate');
+    if (c.total) {
+      assert.equal(r.total, c.total, c.receipt);
+      assert.equal(r.items.reduce((a, i) => a + i.line, 0) + r.service + r.sst + r.rounding, c.total, c.receipt + ': adds up');
+    }
+  }
+  console.log('passed: real receipts');
+}
+
+// Photo clean-up: tilt from the reader's baselines, and black and white that keeps print but drops a shadow.
+function photoCleanup() {
+  const { tilt, binarize } = require('./public/receipt-parse.js');
+  const line = (y0, y1) => ({ baseline: { x0: 0, x1: 1000, y0, y1 } });
+  assert.ok(Math.abs(tilt([{ paragraphs: [{ lines: [line(100, 260), line(300, 460), line(500, 650), line(0, 5)] }] }]) - Math.atan(0.16)) < 1e-9);
+  assert.equal(tilt([]), 0);
+  // White paper whose right half is in shadow (grey 110), with one black dot in the light half and one in the shadow.
+  const W = 200, H = 100, data = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    let v = x < 100 ? 245 : 110;
+    if (Math.hypot(x - 50, y - 50) < 3) v = 20;
+    if (Math.hypot(x - 150, y - 50) < 3) v = 40;
+    data.set([v, v, v, 255], (y * W + x) * 4);
+  }
+  const px = (x, y) => data[(y * W + x) * 4];
+  binarize({ data, width: W, height: H });
+  assert.deepEqual([px(50, 50), px(150, 50), px(20, 20), px(170, 80)], [0, 0, 255, 255]);
+  console.log('passed: photo clean-up');
+}
+
 // Trip maths: shares, balances that always add up to zero, and settle-up transfers.
 function tripMaths() {
   const Settle = require('./public/settle.js');
@@ -499,6 +536,8 @@ async function tripItemsSuite(name, call) {
 
 (async () => {
   receiptParsing();
+  realReceipts();
+  photoCleanup();
   tripMaths();
   await pushNotifications();
   await new Promise((r) => server.listen(0, r));
