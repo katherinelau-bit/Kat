@@ -86,6 +86,16 @@ input[type=text],input[type=date],input[type=number],input[type=search]{backgrou
 .irow.h{font-size:12px;color:var(--muted);font-weight:600}
 .irow .mono{text-align:right;overflow-wrap:anywhere}
 .irow .x{border:0;background:none;color:var(--muted);font-size:18px}
+/* Phones: the dish name gets a full line of its own, with quantity, price, total and remove on the line below. */
+@media (max-width:560px){
+  .irow{grid-template-columns:56px minmax(0,1fr) minmax(0,1fr) 28px;grid-template-areas:"name name name name" "qty each total x";row-gap:6px}
+  .irow:not(.h){padding-bottom:10px;border-bottom:1px solid var(--line)}
+  .irow>:nth-child(1){grid-area:name}.irow>:nth-child(2){grid-area:qty}.irow>:nth-child(3){grid-area:each}.irow>:nth-child(4){grid-area:total}.irow>:nth-child(5){grid-area:x}
+  .irow.h>:first-child{display:none}
+}
+/* iPhone Safari gives date boxes a fixed inner width that can push them past the card. */
+input[type=date]{-webkit-appearance:none;appearance:none;display:block;min-height:38px}
+input[type=date]::-webkit-date-and-time-value{text-align:left}
 .drop{border:2px dashed var(--line);border-radius:12px;padding:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;justify-content:space-between}
 .thumb{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
