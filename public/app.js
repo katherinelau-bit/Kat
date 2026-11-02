@@ -275,7 +275,7 @@ function viewHome() {
     h += '<div class="alert info"><span>You have an unfinished bill' + (ud.title ? ': <b>' + esc(ud.title) + '</b>' : '') + (n ? ' (' + n + ' item' + (n > 1 ? 's' : '') + ', ' + fmt(draftTotal(ud)) + ')' : '') + '.</span><span class="row" style="gap:6px"><button class="btn small primary" data-nav="/new">Continue</button><button class="btn small" data-act="discarddraft">Discard</button></span></div>';
   }
   h += alertsFor(S.home);
-  h += '<div class="tiles"><div class="tile"><div class="k">You owe</div><div class="v">' + fmt(owe) + '</div></div><div class="tile"><div class="k">Owed to you</div><div class="v">' + fmt(owed) + '</div></div></div>';
+  h += '<div class="tiles"><div class="tile owe"><div class="k">You owe</div><div class="v">' + fmt(owe) + '</div></div><div class="tile owed"><div class="k">Owed to you</div><div class="v">' + fmt(owed) + '</div></div></div>';
   h += '<div class="row between"><h2>Your bills</h2><button class="btn primary" data-nav="/new">New bill</button></div>';
   if (!S.home.length) h += '<div class="card empty"><h3>No bills yet</h3><p class="muted">Add a receipt, send the link to your friends, and let them pick their dishes. Bills you create or join on this phone show up here.</p><button class="btn primary" data-nav="/new">Add a receipt</button></div>';
   S.home.forEach(function (b) {
@@ -538,7 +538,7 @@ function viewTrip() {
 
   // Your position
   var my = bal[meId] || { net: 0, paid: 0, owes: 0 };
-  h += '<div class="tiles"><div class="tile"><div class="k">' + (my.net > 0 ? 'You get back' : my.net < 0 ? 'You owe' : 'You are') + '</div><div class="v">' + (my.net ? fmt(Math.abs(my.net)) : 'Settled') + '</div></div><div class="tile"><div class="k">You paid · your share</div><div class="v" style="font-size:16px">Paid ' + fmt(my.paid) + '<br>Share ' + fmt(my.owes) + '</div></div></div>';
+  h += '<div class="tiles"><div class="tile' + (my.net > 0 ? ' owed' : my.net < 0 ? ' owe' : '') + '"><div class="k">' + (my.net > 0 ? 'You get back' : my.net < 0 ? 'You owe' : 'You are') + '</div><div class="v">' + (my.net ? fmt(Math.abs(my.net)) : 'Settled') + '</div></div><div class="tile"><div class="k">You paid · your share</div><div class="v" style="font-size:16px">Paid ' + fmt(my.paid) + '<br>Share ' + fmt(my.owes) + '</div></div></div>';
   if (!me.hasQr) h += '<div class="alert"><span>Add your DuitNow QR so others can pay you when settling up.</span><button class="btn small primary" data-act="tqr">Add my DuitNow QR</button></div>';
   h += notifyHtml(t, 'someone pays you');
   h += tripSettleHtml(t, meId);
@@ -846,8 +846,8 @@ function pickDish(itemId) {
 
 /* ---------- summary picture ----------
  * A picture of who ate what and who has paid, to post in the group chat or keep. Always drawn light, since it is shared. */
-var SUM = { bg: '#f3f4f8', card: '#ffffff', ink: '#161a2b', muted: '#5d6479', line: '#dfe2ec', accent: '#d4206b', good: '#14804a', warn: '#8f5200',
-  display: '"Bricolage Grotesque","Trebuchet MS",system-ui,sans-serif', body: '"Figtree",system-ui,-apple-system,"Segoe UI",sans-serif', mono: '"IBM Plex Mono",ui-monospace,Menlo,monospace' };
+var SUM = { bg: '#eef6ff', card: '#ffffff', ink: '#14213d', muted: '#51607a', line: '#d9e3f0', accent: '#ff7a45', good: '#12805f', warn: '#b26a00',
+  display: '"Nunito",system-ui,sans-serif', body: '"Nunito",system-ui,-apple-system,"Segoe UI",sans-serif', mono: '"Nunito",system-ui,sans-serif' };
 function wrapText(x, text, width) {
   var words = String(text).split(' '), lines = [], cur = '';
   words.forEach(function (w) { var t = cur ? cur + ' ' + w : w; if (x.measureText(t).width > width && cur) { lines.push(cur); cur = w; } else cur = t; });

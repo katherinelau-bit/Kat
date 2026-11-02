@@ -120,3 +120,133 @@ input[type=date]::-webkit-date-and-time-value{text-align:left}
 .err{color:var(--bad);font-size:13px}
 .btn.ghost{align-self:flex-start;text-align:left}
 .linkbox input{flex:1 1 100%}
+
+/* =====================================================================================================
+ * The look: "Makan-Makan, Jalan-Jalan" (travel postcards and boarding passes, with food). The rules above
+ * are the layout; everything below sets the colours, type and decoration.
+ * ===================================================================================================== */
+:root{
+  --bg:#eef6ff; --surface:#ffffff; --ink:#14213d; --muted:#51607a; --line:#d9e3f0;
+  --sky:#2f80ed; --sunset:#ff7a45; --palm:#16a37a; --sun:#ffc93c; --sea:#22b8cf;
+  --accent:#ff7a45; --accent-ink:#ffffff; --accent-soft:#fff1e8;
+  --good:#12805f; --good-soft:#e3f7ef; --warn:#b26a00; --warn-soft:#fff4dc; --bad:#d6334a; --bad-soft:#ffe8ec;
+  --font-display:"Nunito",system-ui,sans-serif; --font-body:"Nunito",system-ui,sans-serif; --font-mono:"Nunito",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f1a2e; --surface:#16243d; --ink:#f1f5ff; --muted:#a9b6cf; --line:#2a3b5c;
+  --accent:#ff8a5c; --accent-ink:#1b0f08; --accent-soft:#3a2216;
+  --good:#4fd6a6; --good-soft:#13352a; --warn:#ffcf6b; --warn-soft:#3a2d10; --bad:#ff7d8f; --bad-soft:#3d1820; color-scheme:dark}}
+body{font-size:16px;line-height:1.5;font-weight:600;padding-top:36px;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='150'%3E%3Cpath d='M-10 120 C 90 20, 230 20, 330 70 S 450 90 460 40' fill='none' stroke='%232f80ed' stroke-width='2.2' stroke-dasharray='7 9' opacity='.35'/%3E%3Cg transform='translate(338 58) rotate(-18)' fill='%232f80ed' opacity='.55'%3E%3Cpath d='M0 0 L18 -3 L22 0 L18 3 Z M6 0 L2 -9 L6 -9 L12 -1 Z M6 0 L2 9 L6 9 L12 1 Z M17 0 L15 -5 L17 -5 L19 -1 Z M17 0 L15 5 L17 5 L19 1Z'/%3E%3C/g%3E%3Cg fill='%23fff' opacity='.9'%3E%3Cellipse cx='60' cy='30' rx='26' ry='9'/%3E%3Cellipse cx='78' cy='24' rx='16' ry='10'/%3E%3Cellipse cx='250' cy='118' rx='22' ry='8'/%3E%3Cellipse cx='264' cy='112' rx='13' ry='9'/%3E%3C/g%3E%3C/svg%3E") center -78px/420px 150px no-repeat,
+    linear-gradient(180deg,#d9ecff 0,#eef6ff 260px,#fff8ec 900px);background-attachment:scroll}
+.wrap{gap:18px}
+h1,h2,h3{font-family:var(--font-display);font-weight:900;letter-spacing:-.01em;line-height:1.2}
+h2{font-size:24px} h3{font-size:18px}
+.brand{font-family:var(--font-display);font-weight:900;font-size:32px;letter-spacing:-.02em}
+.brand span{color:var(--sunset)}
+.brand::after{content:"\2708\FE0E";display:inline-block;margin-left:6px;font-size:22px;color:var(--sky);transform:rotate(-20deg) translateY(-6px)}
+.tag{font-weight:700;color:var(--muted);font-size:14px}
+/* Tickets: white, rounded, a soft lift, a dashed stub line under the heading. */
+.card,.bill{background:var(--surface);border:0;border-radius:20px;box-shadow:0 2px 0 rgba(20,33,61,.06),0 10px 24px -14px rgba(20,33,61,.35)}
+.card{padding:18px;position:relative}
+.card > h3:first-child,.card > .row:first-child{padding-bottom:12px;margin-bottom:2px;border-bottom:2px dashed var(--line)}
+.btn{border:2px solid var(--line);background:var(--surface);border-radius:14px;padding:11px 18px;font-weight:800;min-height:46px;white-space:nowrap}
+.btn:hover{border-color:var(--sky)}
+.btn.primary{background:var(--sunset);border-color:var(--sunset);color:#fff;box-shadow:0 4px 0 #d9572a}
+.btn.primary:active{transform:translateY(2px);box-shadow:0 2px 0 #d9572a}
+.btn.small{min-height:36px;padding:6px 12px;font-size:14px;border-radius:12px}
+.btn.ghost{min-height:0;border:0;background:none;color:var(--sky);font-weight:800;padding-left:0}
+.alert{border-radius:18px;font-weight:800;border:2px solid currentColor;background:var(--surface)}
+.alert .btn{border-color:currentColor;color:inherit;background:transparent}
+.alert.info{background:var(--surface);color:var(--sky)}
+/* The main button in an alert ("Notify me", "Add DuitNow QR") keeps its own colours. */
+.alert .btn.primary{background:var(--sunset);border-color:var(--sunset);color:#fff;box-shadow:0 3px 0 var(--chili)}
+/* Home totals: a boarding pass, two halves torn along a perforation, with notches at the tear. */
+.tiles{position:relative;gap:0;background:var(--surface);border-radius:20px;box-shadow:0 10px 24px -14px rgba(20,33,61,.35);overflow:hidden}
+.tiles::before{content:"BOARDING PASS · BEI CIN LAH AIR";position:absolute;left:0;right:0;top:0;padding:7px 16px;background:var(--sky);color:#fff;font-size:11px;font-weight:900;letter-spacing:.14em}
+.tile{background:transparent;border:0;border-radius:0;padding:42px 16px 18px;box-shadow:none}
+.tile+.tile{border-left:2px dashed var(--line)}
+.tile .k{font-size:12px;font-weight:900;letter-spacing:.1em;color:var(--muted)}
+.tile .v{font-family:var(--font-display);font-size:25px;white-space:nowrap;font-weight:900;color:var(--ink);letter-spacing:-.01em}
+/* Money owed in red, money coming back in green (on the home page and in a trip). */
+.tile.owe .v{color:var(--bad)} .tile.owed .v{color:var(--palm)}
+.tile:first-child .k::after{content:"  \2708\FE0E";color:var(--sky)}
+/* Bill and trip rows: postcards with a coloured stamp corner. */
+.bill{padding:16px 16px 16px 18px;position:relative;overflow:hidden}
+.bill::after{content:"";position:absolute;right:-18px;top:-18px;width:56px;height:56px;border-radius:50%;background:var(--sun);opacity:.35}
+.bill:nth-of-type(3n+2)::after{background:var(--sea)} .bill:nth-of-type(3n)::after{background:var(--sunset)}
+.bill .t{font-family:var(--font-display);font-weight:900;font-size:19px}
+.bill .mono{font-family:var(--font-body);font-weight:800}
+.bill:hover{box-shadow:0 2px 0 rgba(20,33,61,.06),0 14px 28px -12px rgba(47,128,237,.45)}
+/* Statuses: passport stamps. */
+.pill{background:transparent !important;border:2px dashed currentColor;border-radius:8px;padding:2px 9px;font-size:12px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;transform:rotate(-6deg);position:relative;z-index:1}
+.pill.paid{color:var(--good)} .pill.sent{color:var(--warn)} .pill.unpaid{color:var(--bad)} .pill.open{color:var(--sky)} .pill.none{color:var(--muted)}
+/* Friends: bright faces with a white ring, overlapping like a group photo. */
+.av{width:32px;height:32px;font-size:13px;font-weight:900;border:3px solid var(--surface);box-shadow:0 2px 6px rgba(20,33,61,.2)}
+.avs .av+.av{margin-left:-10px}
+/* In a dish row the avatars are smaller, leaving the dish name room to read on a phone. */
+.ln .av{width:24px;height:24px;font-size:11px;border-width:2px}
+.ln .avs .av+.av{margin-left:-9px}
+/* Dishes. */
+.receipt{font-family:var(--font-body);font-size:15px;font-weight:700}
+.receipt .pr{font-weight:800}
+.ln{border-bottom:2px dashed var(--line);border-radius:12px;padding:12px 8px}
+button.ln:hover{background:#f4f9ff}
+.ln .chk{border:2.5px solid #9fb0c9;border-radius:50%;width:26px;height:26px;font-size:14px;font-weight:900}
+.ln.on{background:#fff6d6}
+.ln.on .chk{background:var(--palm);border-color:var(--palm);color:#fff}
+.ln .sub{font-weight:600;color:var(--muted);font-size:12px}
+.chg{font-weight:700}
+.chg.tot{border-top:3px solid var(--ink);font-weight:900;font-size:17px}
+/* Your share: a ticket with a tear-off stub for the QR. */
+.share{background:var(--surface);border-top:8px solid var(--sky);overflow:hidden}
+.share .big{font-family:var(--font-display);font-weight:900;font-size:34px;color:var(--sunset)}
+.share .pay{border-top:2px dashed var(--line);padding-top:16px;margin-top:4px;position:relative}
+.share .pay::before,.share .pay::after{content:"";position:absolute;top:-12px;width:22px;height:22px;border-radius:50%;background:var(--bg)}
+.share .pay::before{left:-29px} .share .pay::after{right:-29px}
+.qr{border:3px solid var(--ink);border-radius:16px;box-shadow:6px 6px 0 var(--sun);transform:rotate(-2deg)}
+.field label{font-size:13px;font-weight:900;color:var(--ink);text-transform:none;letter-spacing:0}
+.field select,input[type=text],input[type=date],input[type=number],input[type=search]{border:2px solid var(--line);border-radius:12px;padding:11px 12px;font-weight:700;background:var(--surface);min-height:46px}
+input:focus,select:focus{outline:none;border-color:var(--sky);box-shadow:0 0 0 4px rgba(47,128,237,.15)}
+.drop{border:2.5px dashed var(--sky);border-radius:18px;background:#f4f9ff}
+.person{border-bottom:2px dashed var(--line)}
+.irow:not(.h){border-bottom:2px dashed var(--line)}
+.modal .box{border-radius:20px}
+.toast{background:var(--ink);color:#fff;font-weight:800;border-radius:14px}
+
+/* ---- Makan-Makan, Jalan-Jalan: food doodles, a Makan Pass, food stamps, "CHOPE!" on ticked dishes ---- */
+:root{ --chili:#d6334a; --tehtarik:#8a5a3b; --pandan:#16a37a; }
+body{background:url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'260'%20height%3D'260'%3E%3Cg%20fill%3D'none'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%20opacity%3D'.11'%3E%3Cg%20transform%3D'translate(18%2022)%20rotate(-8%2014%2014)%20scale(1.15)'%20stroke%3D'%23ff7a45'%3E%3Cpath%20d%3D%22M3%2011h18a9%209%200%200%201-18%200z%22%2F%3E%3Cpath%20d%3D%22M8%203c-1%201.5%201%202.5%200%204M12%202c-1%201.5%201%202.5%200%204M15%204l6-3M16%206l6-2%22%2F%3E%3C%2Fg%3E%3Cg%20transform%3D'translate(150%2014)%20rotate(20%2014%2014)%20scale(1.15)'%20stroke%3D'%232f80ed'%3E%3Cpath%20d%3D%22M2%2013l8-1%205-8h2l-2%208%205%200%202-3h1l-1%204%201%204h-1l-2-3h-5l2%208h-2l-5-8-8-1z%22%2F%3E%3C%2Fg%3E%3Cg%20transform%3D'translate(96%2092)%20rotate(10%2014%2014)%20scale(1.15)'%20stroke%3D'%23d6334a'%3E%3Cpath%20d%3D%22M3%2021L21%203%22%2F%3E%3Crect%20x%3D%2211%22%20y%3D%225%22%20width%3D%225%22%20height%3D%224%22%20rx%3D%221.5%22%20transform%3D%22rotate(45%2013.5%207)%22%2F%3E%3Crect%20x%3D%228%22%20y%3D%228%22%20width%3D%225%22%20height%3D%224%22%20rx%3D%221.5%22%20transform%3D%22rotate(45%2010.5%2010)%22%2F%3E%3Crect%20x%3D%225%22%20y%3D%2211%22%20width%3D%225%22%20height%3D%224%22%20rx%3D%221.5%22%20transform%3D%22rotate(45%207.5%2013)%22%2F%3E%3C%2Fg%3E%3Cg%20transform%3D'translate(206%2096)%20rotate(-10%2014%2014)%20scale(1.15)'%20stroke%3D'%238a5a3b'%3E%3Cpath%20d%3D%22M5%209h11v6a5%205%200%200%201-5%205h-1a5%205%200%200%201-5-5z%22%2F%3E%3Cpath%20d%3D%22M16%2011h2a2.5%202.5%200%200%201%200%205h-2%22%2F%3E%3Cpath%20d%3D%22M8%203c-1%201.5%201%202%200%204M12%203c-1%201.5%201%202%200%204%22%2F%3E%3C%2Fg%3E%3Cg%20transform%3D'translate(30%20160)%20rotate(0%2014%2014)%20scale(1.15)'%20stroke%3D'%2316a37a'%3E%3Cpath%20d%3D%22M12%2022s7-7%207-12a7%207%200%200%200-14%200c0%205%207%2012%207%2012z%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2210%22%20r%3D%222.5%22%2F%3E%3C%2Fg%3E%3Cg%20transform%3D'translate(150%20176)%20rotate(18%2014%2014)%20scale(1.15)'%20stroke%3D'%23d6334a'%3E%3Cpath%20d%3D%22M6%2019c6%201%2012-4%2012-11%22%2F%3E%3Cpath%20d%3D%22M6%2019c3-3%206-6%207-11a5%205%200%200%201%205%200%22%2F%3E%3Cpath%20d%3D%22M18%208c0-2%201-4%203-5%22%2F%3E%3C%2Fg%3E%3Cg%20transform%3D'translate(214%20214)%20rotate(6%2014%2014)%20scale(1.15)'%20stroke%3D'%232f80ed'%3E%3Cpath%20d%3D%22M3%2011h18a9%209%200%200%201-18%200z%22%2F%3E%3Cpath%20d%3D%22M8%203c-1%201.5%201%202.5%200%204M12%202c-1%201.5%201%202.5%200%204M15%204l6-3M16%206l6-2%22%2F%3E%3C%2Fg%3E%3Cg%20transform%3D'translate(70%20222)%20rotate(12%2014%2014)%20scale(1.15)'%20stroke%3D'%23ff7a45'%3E%3Cpath%20d%3D%22M5%209h11v6a5%205%200%200%201-5%205h-1a5%205%200%200%201-5-5z%22%2F%3E%3Cpath%20d%3D%22M16%2011h2a2.5%202.5%200%200%201%200%205h-2%22%2F%3E%3Cpath%20d%3D%22M8%203c-1%201.5%201%202%200%204M12%203c-1%201.5%201%202%200%204%22%2F%3E%3C%2Fg%3E%3C%2Fg%3E%3C%2Fsvg%3E") 0 0/260px 260px repeat,
+  linear-gradient(180deg,#d9ecff 0,#eef6ff 260px,#fff8ec 900px)}
+.brand::after{content:"";display:inline-block;width:30px;height:30px;margin-left:8px;vertical-align:-3px;transform:rotate(-8deg);background:url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'30'%20height%3D'30'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'%23ff7a45'%20stroke-width%3D'2.1'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D%22M3%2011h18a9%209%200%200%201-18%200z%22%2F%3E%3Cpath%20d%3D%22M8%203c-1%201.5%201%202.5%200%204M12%202c-1%201.5%201%202.5%200%204M15%204l6-3M16%206l6-2%22%2F%3E%3C%2Fsvg%3E") center/contain no-repeat}
+.brand::before{content:"";display:inline-block;width:24px;height:24px;margin-right:6px;vertical-align:4px;transform:rotate(-20deg);background:url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'24'%20height%3D'24'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'%232f80ed'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D%22M2%2013l8-1%205-8h2l-2%208%205%200%202-3h1l-1%204%201%204h-1l-2-3h-5l2%208h-2l-5-8-8-1z%22%2F%3E%3C%2Fsvg%3E") center/contain no-repeat;float:right;margin-top:-8px}
+/* The boarding pass is a Makan Pass, KUL to SEDAP. */
+.tiles::before{content:"MAKAN PASS";}
+.tiles::after{content:"KUL \2708\FE0E  SEDAP";position:absolute;right:16px;top:7px;font-size:11px;font-weight:900;letter-spacing:.12em;color:var(--sun)}
+.tile:first-child .k::after{content:""}
+/* Bill and trip cards: a food stamp in the corner. */
+.bill::after{right:12px;top:12px;width:44px;height:44px;opacity:1;border:2px dashed currentColor;color:var(--sunset);background:#fff4ec url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'28'%20height%3D'28'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'%23ff7a45'%20stroke-width%3D'2'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D%22M3%2011h18a9%209%200%200%201-18%200z%22%2F%3E%3Cpath%20d%3D%22M8%203c-1%201.5%201%202.5%200%204M12%202c-1%201.5%201%202.5%200%204M15%204l6-3M16%206l6-2%22%2F%3E%3C%2Fsvg%3E") center/26px no-repeat;transform:rotate(-10deg)}
+.bill:nth-of-type(3n+2)::after{color:var(--chili);background:#ffecef url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'28'%20height%3D'28'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'%23d6334a'%20stroke-width%3D'2'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D%22M3%2021L21%203%22%2F%3E%3Crect%20x%3D%2211%22%20y%3D%225%22%20width%3D%225%22%20height%3D%224%22%20rx%3D%221.5%22%20transform%3D%22rotate(45%2013.5%207)%22%2F%3E%3Crect%20x%3D%228%22%20y%3D%228%22%20width%3D%225%22%20height%3D%224%22%20rx%3D%221.5%22%20transform%3D%22rotate(45%2010.5%2010)%22%2F%3E%3Crect%20x%3D%225%22%20y%3D%2211%22%20width%3D%225%22%20height%3D%224%22%20rx%3D%221.5%22%20transform%3D%22rotate(45%207.5%2013)%22%2F%3E%3C%2Fsvg%3E") center/26px no-repeat;transform:rotate(8deg)}
+.bill:nth-of-type(3n)::after{color:var(--tehtarik);background:#f7efe9 url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'28'%20height%3D'28'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'%238a5a3b'%20stroke-width%3D'2'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D%22M5%209h11v6a5%205%200%200%201-5%205h-1a5%205%200%200%201-5-5z%22%2F%3E%3Cpath%20d%3D%22M16%2011h2a2.5%202.5%200%200%201%200%205h-2%22%2F%3E%3Cpath%20d%3D%22M8%203c-1%201.5%201%202%200%204M12%203c-1%201.5%201%202%200%204%22%2F%3E%3C%2Fsvg%3E") center/26px no-repeat;transform:rotate(-4deg)}
+.bill .grow{padding-right:46px}
+.bill .pill{position:absolute;right:12px;bottom:12px}
+/* A spoon-and-fork before each section title. */
+.card > h3:first-child::before,.card > .row:first-child h3::before{content:"";display:inline-block;width:20px;height:20px;margin-right:8px;vertical-align:-3px;background:url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'20'%20height%3D'20'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'%23ff7a45'%20stroke-width%3D'2'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D%22M7%202v7a2%202%200%200%200%204%200V2M9%209v13M17%202c-2%202-2%207%200%209v11%22%2F%3E%3C%2Fsvg%3E") center/contain no-repeat}
+/* Ticked dishes: CHOPE! */
+.ln.on .nm::after{content:"CHOPE!";display:inline-block;margin-left:8px;padding:0 5px;border:2px solid var(--chili);border-radius:5px;color:var(--chili);font-size:10px;font-weight:900;letter-spacing:.08em;line-height:16px;transform:rotate(-7deg);vertical-align:2px}
+/* Your share: the ticket says what it is. */
+.share::before{content:"MAKAN PASS · YOUR SHARE";position:absolute;left:0;right:0;top:-8px;padding:7px 18px;background:var(--sky);color:#fff;font-size:11px;font-weight:900;letter-spacing:.14em}
+.share{padding-top:44px}
+.share > .row:first-child{padding-top:2px}
+/* Buttons: sambal orange with a chilli edge. */
+.btn.primary{background:var(--sunset);box-shadow:0 4px 0 var(--chili)}
+
+.bill .grow > :last-child{padding-right:96px}
+
+/* Dark mode: a night sky, the same doodles in light ink, and dark versions of the highlight colours. */
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) body{background:url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'260'%20height%3D'260'%3E%3Cg%20fill%3D'none'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%20opacity%3D'.08'%3E%3Cg%20transform%3D'translate(18%2022)%20rotate(-8%2014%2014)%20scale(1.15)'%20stroke%3D'%23ff7a45'%3E%3Cpath%20d%3D%22M3%2011h18a9%209%200%200%201-18%200z%22%2F%3E%3Cpath%20d%3D%22M8%203c-1%201.5%201%202.5%200%204M12%202c-1%201.5%201%202.5%200%204M15%204l6-3M16%206l6-2%22%2F%3E%3C%2Fg%3E%3Cg%20transform%3D'translate(150%2014)%20rotate(20%2014%2014)%20scale(1.15)'%20stroke%3D'%232f80ed'%3E%3Cpath%20d%3D%22M2%2013l8-1%205-8h2l-2%208%205%200%202-3h1l-1%204%201%204h-1l-2-3h-5l2%208h-2l-5-8-8-1z%22%2F%3E%3C%2Fg%3E%3Cg%20transform%3D'translate(96%2092)%20rotate(10%2014%2014)%20scale(1.15)'%20stroke%3D'%23d6334a'%3E%3Cpath%20d%3D%22M3%2021L21%203%22%2F%3E%3Crect%20x%3D%2211%22%20y%3D%225%22%20width%3D%225%22%20height%3D%224%22%20rx%3D%221.5%22%20transform%3D%22rotate(45%2013.5%207)%22%2F%3E%3Crect%20x%3D%228%22%20y%3D%228%22%20width%3D%225%22%20height%3D%224%22%20rx%3D%221.5%22%20transform%3D%22rotate(45%2010.5%2010)%22%2F%3E%3Crect%20x%3D%225%22%20y%3D%2211%22%20width%3D%225%22%20height%3D%224%22%20rx%3D%221.5%22%20transform%3D%22rotate(45%207.5%2013)%22%2F%3E%3C%2Fg%3E%3Cg%20transform%3D'translate(206%2096)%20rotate(-10%2014%2014)%20scale(1.15)'%20stroke%3D'%238a5a3b'%3E%3Cpath%20d%3D%22M5%209h11v6a5%205%200%200%201-5%205h-1a5%205%200%200%201-5-5z%22%2F%3E%3Cpath%20d%3D%22M16%2011h2a2.5%202.5%200%200%201%200%205h-2%22%2F%3E%3Cpath%20d%3D%22M8%203c-1%201.5%201%202%200%204M12%203c-1%201.5%201%202%200%204%22%2F%3E%3C%2Fg%3E%3Cg%20transform%3D'translate(30%20160)%20rotate(0%2014%2014)%20scale(1.15)'%20stroke%3D'%2316a37a'%3E%3Cpath%20d%3D%22M12%2022s7-7%207-12a7%207%200%200%200-14%200c0%205%207%2012%207%2012z%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2210%22%20r%3D%222.5%22%2F%3E%3C%2Fg%3E%3Cg%20transform%3D'translate(150%20176)%20rotate(18%2014%2014)%20scale(1.15)'%20stroke%3D'%23d6334a'%3E%3Cpath%20d%3D%22M6%2019c6%201%2012-4%2012-11%22%2F%3E%3Cpath%20d%3D%22M6%2019c3-3%206-6%207-11a5%205%200%200%201%205%200%22%2F%3E%3Cpath%20d%3D%22M18%208c0-2%201-4%203-5%22%2F%3E%3C%2Fg%3E%3Cg%20transform%3D'translate(214%20214)%20rotate(6%2014%2014)%20scale(1.15)'%20stroke%3D'%232f80ed'%3E%3Cpath%20d%3D%22M3%2011h18a9%209%200%200%201-18%200z%22%2F%3E%3Cpath%20d%3D%22M8%203c-1%201.5%201%202.5%200%204M12%202c-1%201.5%201%202.5%200%204M15%204l6-3M16%206l6-2%22%2F%3E%3C%2Fg%3E%3Cg%20transform%3D'translate(70%20222)%20rotate(12%2014%2014)%20scale(1.15)'%20stroke%3D'%23ff7a45'%3E%3Cpath%20d%3D%22M5%209h11v6a5%205%200%200%201-5%205h-1a5%205%200%200%201-5-5z%22%2F%3E%3Cpath%20d%3D%22M16%2011h2a2.5%202.5%200%200%201%200%205h-2%22%2F%3E%3Cpath%20d%3D%22M8%203c-1%201.5%201%202%200%204M12%203c-1%201.5%201%202%200%204%22%2F%3E%3C%2Fg%3E%3C%2Fg%3E%3C%2Fsvg%3E") 0 0/260px 260px repeat,linear-gradient(180deg,#14284a 0,#0f1a2e 300px,#0f1a2e)}
+  :root:not([data-theme="light"]) .ln.on{background:#3a3214}
+  :root:not([data-theme="light"]) button.ln:hover,:root:not([data-theme="light"]) .drop{background:#1c2c4a}
+  :root:not([data-theme="light"]) .bill::after{background-color:#2a2030}
+  :root:not([data-theme="light"]) .qr{border-color:#f1f5ff}
+  :root:not([data-theme="light"]) .btn.primary{color:#fff}}
