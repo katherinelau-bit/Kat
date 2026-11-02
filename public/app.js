@@ -289,9 +289,12 @@ function viewHome() {
   h += '<p class="foot">Reminders show up when someone opens the bill. To send them on WhatsApp, use the Remind button on a bill.</p>';
   return h;
 }
+// Text first, buttons on their own line below, so neither squeezes the other on a phone.
 function devicesCard() {
-  if (!S.store.sync) return '<div class="card"><div class="row between" style="flex-wrap:wrap;gap:10px"><div class="grow"><b>Use Bei Cin Lah on your phone and laptop</b><div class="small muted">Link your devices once, and every bill and trip you create or join shows up on all of them.</div></div><button class="btn" data-act="linkdev">Link my devices</button></div></div>';
-  return '<div class="card"><div class="row between" style="flex-wrap:wrap;gap:10px"><div class="grow"><b>Devices linked</b><div class="small muted">Bills and trips you create or join here also show up on your other linked devices.</div></div><span class="row" style="gap:6px;flex-wrap:wrap"><button class="btn small" data-act="linkdev">Link another device</button><button class="btn small" data-act="unlinkdev">Unlink this device</button></span></div></div>';
+  var linked = !!S.store.sync;
+  return '<div class="card"><div><b>' + (linked ? 'Devices linked' : 'Use Bei Cin Lah on your phone and laptop') + '</b><p class="small muted" style="margin:4px 0 0">' +
+    (linked ? 'Bills and trips you create or join here also show up on your other linked devices.' : 'Link your devices once, and every bill and trip you create or join shows up on all of them.') + '</p></div>' +
+    '<div class="row" style="gap:8px;flex-wrap:wrap">' + (linked ? '<button class="btn small" data-act="linkdev">Link another device</button><button class="btn small" data-act="unlinkdev">Unlink this device</button>' : '<button class="btn" data-act="linkdev">Link my devices</button>') + '</div></div>';
 }
 function receiptTotals(b, c) {
   var h = '<div class="chg"><span>Subtotal</span><span>' + fmt(c.sum) + '</span></div>';
