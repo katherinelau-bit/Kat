@@ -11,6 +11,7 @@
   "dependencies": {
     "@netlify/blobs": "^11.1.7",
     "@tesseract.js-data/eng": "^1.0.0",
+    "qrcode-generator": "^1.4.4",
     "tesseract.js": "^7.0.0"
   },
   "engines": {

@@ -17,6 +17,7 @@ function fakeBlobs() {
     async getWithMetadata(k, o) { await tick(); const v = m.get(k); if (!v) return null; return { data: o && o.type === 'json' ? JSON.parse(v.data) : v.data, etag: v.etag }; },
     async set(k, data, o) { await tick(); const v = m.get(k); if (o && o.onlyIfMatch && (!v || v.etag !== o.onlyIfMatch)) return { modified: false }; m.set(k, { data, etag: 'e' + (++n) }); return { modified: true, etag: 'e' + n }; },
     async delete(k) { await tick(); m.delete(k); },
+    dump() { return [...m.entries()].map(([k, v]) => k + ' ' + v.data).join('\n'); },
   };
 }
 
@@ -311,6 +312,65 @@ function photoCleanup() {
   console.log('passed: photo clean-up');
 }
 
+// Linking devices: how two copies of "my bills and trips" merge.
+function syncMerge() {
+  const { merge, sameList } = require('./public/sync.js');
+  const e = (token, at, title = 'x') => ({ token, memberId: 'm1', title, at });
+  // Both sides' bills and trips are kept; for the same bill the newer entry wins; the newer name wins.
+  let m = merge({ bills: { aaaa: e('11', 10) }, name: 'Kat', nameAt: 5 }, { bills: { aaaa: e('22', 20), bbbb: e('33', 1) }, trips: { tttt: e('44', 1) }, name: 'Katherine', nameAt: 9 });
+  assert.deepEqual(Object.keys(m.bills).sort(), ['aaaa', 'bbbb']);
+  assert.equal(m.bills.aaaa.token, '22');
+  assert.deepEqual([Object.keys(m.trips), m.name, m.nameAt], [['tttt'], 'Katherine', 9]);
+  // Left or deleted on one device: gone from the merged list, even though the other device still has it...
+  m = merge({ bills: {}, gone: { 'b:aaaa': 30 } }, { bills: { aaaa: e('22', 20) } });
+  assert.deepEqual(m.bills, {});
+  assert.equal(m.gone['b:aaaa'], 30);
+  // ...unless it was joined again after that.
+  m = merge(m, { bills: { aaaa: e('55', 40) } });
+  assert.equal(m.bills.aaaa.token, '55');
+  // A trip id never removes a bill with the same id.
+  assert.ok(merge({ gone: { 't:aaaa': 99 } }, { bills: { aaaa: e('1', 1) } }).bills.aaaa);
+  assert.ok(sameList({ bills: { aaaa: e('1', 1, 'A') } }, { bills: { aaaa: e('1', 7, 'B') } }), 'titles and times do not count');
+  assert.ok(!sameList({ bills: { aaaa: e('1', 1) } }, { bills: {} }));
+  console.log('passed: device sync merging');
+}
+
+// Linking devices through the API: devices sharing a key see each other's bills and trips; turning it off is final.
+async function syncSuite(name, call, dump) {
+  const key = 'k'.repeat(10) + require('node:crypto').randomBytes(24).toString('base64url');
+  const tok = (c) => c.repeat(48);
+  const entry = (t, at) => ({ token: tok(t), memberId: 'abcd1234', title: 'Dinner', at });
+  assert.equal((await call('PUT', '/api/sync', {}, 'short')).status, 400);
+  // Laptop sends its bill; the phone sends its trip and name, and gets both back.
+  let r = await call('PUT', '/api/sync', { bills: { bill0001: entry('a', 1000) }, gone: {} }, key);
+  assert.equal(r.status, 200);
+  assert.deepEqual(Object.keys(r.body.bills), ['bill0001']);
+  r = await call('PUT', '/api/sync', { trips: { trip0001: entry('b', 1100) }, name: 'Katherine', nameAt: 1100 }, key);
+  assert.deepEqual([Object.keys(r.body.bills), Object.keys(r.body.trips), r.body.name], [['bill0001'], ['trip0001'], 'Katherine']);
+  assert.equal(r.body.bills.bill0001.token, tok('a'));
+  // Malformed entries are dropped, not stored.
+  r = await call('PUT', '/api/sync', { bills: { 'BAD ID': entry('c', 1), bill0002: { token: '<script>', at: 1 } } }, key);
+  assert.deepEqual(Object.keys(r.body.bills), ['bill0001']);
+  // The laptop leaves the bill; the phone, which still lists it, then loses it too.
+  await call('PUT', '/api/sync', { gone: { 'b:bill0001': 2000 } }, key);
+  r = await call('PUT', '/api/sync', { bills: { bill0001: entry('a', 1000) }, trips: { trip0001: entry('b', 1100) } }, key);
+  assert.deepEqual([Object.keys(r.body.bills), Object.keys(r.body.trips)], [[], ['trip0001']]);
+  // Two devices syncing at the same moment both end up in the list.
+  const both = await Promise.all([call('PUT', '/api/sync', { bills: { bill0003: entry('d', 3000) } }, key), call('PUT', '/api/sync', { bills: { bill0004: entry('e', 3000) } }, key)]);
+  assert.ok(both.every((x) => x.status === 200));
+  r = await call('PUT', '/api/sync', {}, key);
+  assert.deepEqual(Object.keys(r.body.bills).sort(), ['bill0003', 'bill0004']);
+  // Another key sees nothing of this one, and the stored list never contains the key itself.
+  r = await call('PUT', '/api/sync', {}, 'z'.repeat(43));
+  assert.deepEqual([r.body.bills, r.body.trips], [{}, {}]);
+  if (dump) assert.ok(!dump().includes(key), 'sync key stored in plain form');
+  // Turned off everywhere: every device holding the key is told, and it cannot be filled again.
+  assert.equal((await call('DELETE', '/api/sync', null, key)).status, 200);
+  r = await call('PUT', '/api/sync', { bills: { bill0005: entry('f', 5000) } }, key);
+  assert.equal(r.status, 410);
+  console.log('passed: device sync, ' + name);
+}
+
 // Trip maths: shares, balances that always add up to zero, and settle-up transfers.
 function tripMaths() {
   const Settle = require('./public/settle.js');
@@ -539,6 +599,7 @@ async function tripItemsSuite(name, call) {
   realReceipts();
   photoCleanup();
   tripMaths();
+  syncMerge();
   await pushNotifications();
   await new Promise((r) => server.listen(0, r));
   const base = 'http://localhost:' + server.address().port;
@@ -550,9 +611,10 @@ async function tripItemsSuite(name, call) {
   await suite('self-hosted server (SQLite)', viaHttp);
   await tripSuite('self-hosted server (SQLite)', viaHttp);
   await tripItemsSuite('self-hosted server (SQLite)', viaHttp);
+  await syncSuite('self-hosted server (SQLite)', viaHttp, () => { const { DatabaseSync } = require('node:sqlite'); const d = new DatabaseSync(require('node:path').join(process.env.DATA_DIR, 'bei-cin-lah.db')); const t = d.prepare('SELECT id, data FROM syncs').all().map((x) => x.id + ' ' + x.data).join('\n'); d.close(); return t; });
 
   const fb = fakeBlobs();
-  const handle = createApi({ store: createBlobStore(fb), trips: createBlobStore(fb, 'trip/') });
+  const handle = createApi({ store: createBlobStore(fb), trips: createBlobStore(fb, 'trip/'), syncs: createBlobStore(fb, 'sync/') });
   const viaFunction = async (method, url, body, token) => {
     const r = await handle(new Request('https://example.test' + url, { method, headers: { 'content-type': 'application/json', 'x-token': token || '' }, body: body ? JSON.stringify(body) : undefined }));
     const ct = r.headers.get('content-type') || '';
@@ -561,6 +623,7 @@ async function tripItemsSuite(name, call) {
   await suite('Netlify function (Blobs stand-in)', viaFunction);
   await tripSuite('Netlify function (Blobs stand-in)', viaFunction);
   await tripItemsSuite('Netlify function (Blobs stand-in)', viaFunction);
+  await syncSuite('Netlify function (Blobs stand-in)', viaFunction, () => fb.dump());
 
   // The real @netlify/blobs client against its own local server, if `npm install` has been run.
   let blobsPkg, blobsServerPkg;

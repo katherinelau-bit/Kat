@@ -19,6 +19,7 @@ db.exec('PRAGMA journal_mode=WAL');
 db.exec('CREATE TABLE IF NOT EXISTS bills(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)');
 db.exec('CREATE TABLE IF NOT EXISTS images(key TEXT PRIMARY KEY, data TEXT NOT NULL)');
 db.exec('CREATE TABLE IF NOT EXISTS trips(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)');
+db.exec('CREATE TABLE IF NOT EXISTS syncs(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)');
 const q = {
   getBill: db.prepare('SELECT data FROM bills WHERE id=?'),
   putBill: db.prepare('INSERT INTO bills(id,data,created_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data'),
@@ -29,6 +30,8 @@ const q = {
   getTrip: db.prepare('SELECT data FROM trips WHERE id=?'),
   putTrip: db.prepare('INSERT INTO trips(id,data,created_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data'),
   delTrip: db.prepare('DELETE FROM trips WHERE id=?'),
+  getSync: db.prepare('SELECT data FROM syncs WHERE id=?'),
+  putSync: db.prepare('INSERT INTO syncs(id,data,created_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data'),
 };
 const store = {
   async getBill(id) { const r = q.getBill.get(id); return r ? JSON.parse(r.data) : null; },
@@ -59,7 +62,19 @@ const trips = {
     return { bill: t, result };
   },
 };
-const handleApi = createApi({ store, trips, apiKey: process.env.ANTHROPIC_API_KEY || '', model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5' });
+// The lists that keep one person's devices in step ("Link my devices"), same interface again.
+const syncs = {
+  async getBill(id) { const r = q.getSync.get(id); return r ? JSON.parse(r.data) : null; },
+  async putBill(d) { q.putSync.run(d.id, JSON.stringify(d), d.createdAt); },
+  async update(id, fn) {
+    const r = q.getSync.get(id);
+    if (!r) throw new HttpError(404, 'Not found');
+    const d = JSON.parse(r.data), result = fn(d);
+    q.putSync.run(d.id, JSON.stringify(d), d.createdAt);
+    return { bill: d, result };
+  },
+};
+const handleApi = createApi({ store, trips, syncs, apiKey: process.env.ANTHROPIC_API_KEY || '', model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5' });
 
 async function toRequest(req, url) {
   const chunks = []; let size = 0;

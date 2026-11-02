@@ -56,11 +56,12 @@ Claude scans are limited to 15 per hour per visitor to protect your bill. Scans 
 - `lib/core.js`: the whole API, the same code on Netlify and on a normal server.
 - `netlify/functions/api.mjs` and `lib/blobs-store.js`: the Netlify side, storing bills in Netlify Blobs.
 - `server.js`: the self-hosted side, storing bills in a SQLite file.
+- `public/sync.js`: merges the lists of bills and trips from linked devices, shared by server and browser.
 - `public/settle.js`: the trip maths (shares, balances, settle-up transfers), shared by server and browser.
 - `public/split.js`: the split maths, shared by server and browser. Amounts are whole sen so shares always add
   up to the receipt total.
 - `public/receipt-parse.js`: turns the text read off a receipt photo into items and charges.
-- `scripts/copy-ocr.js`: copies the on-phone receipt reader into `public/ocr` (Netlify's build step).
+- `scripts/copy-ocr.js`: copies the on-phone receipt reader and the QR code maker into `public/ocr` (Netlify's build step).
 - `public/app.js`, `index.html`, `style.css`: the website.
 - `node test.js`: checks receipt parsing and the API end to end, including two people ticking dishes at the same moment.
 
@@ -81,6 +82,11 @@ Claude scans are limited to 15 per hour per visitor to protect your bill. Scans 
   nobody picks stay with whoever paid. The trip page shows each person's balance and a short list of
   transfers that settles everyone up. Each person adds their own DuitNow QR; whoever pays uploads a slip or marks
   cash, and the person paid confirms. Only whoever added an expense, or who made the trip, can change it.
+- **Phone and laptop.** There are no accounts: each browser keeps its own list of bills and trips. To see them
+  on another device, tap "Link my devices" on the home page and scan the QR code (or open the link) on the other
+  phone or laptop. From then on, every bill and trip you create, join, leave or delete on one shows up on the
+  others, along with your name. The link is as private as a payer link; "Turn off this link on all devices" stops
+  it everywhere if it was ever shared by mistake, and "Unlink this device" stops syncing just that one.
 - **Summary picture.** "Share summary" on a bill makes a picture of who ate what, how much each person owes and
   who has paid, to share in the group chat (phones) or save (computers).
 - **Reminders.** "Remind" and "Remind everyone" write a ready message to send on WhatsApp, and people who open

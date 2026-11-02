@@ -11,8 +11,19 @@ function hue(id) { var h = 0; for (var i = 0; i < id.length; i++) h = (h * 31 + 
 var S = { cfg: { scan: false }, store: loadStore(), view: 'home', billId: null, bill: null, home: [], homeLoaded: false, err: '',
   draft: null, acting: null, modal: null, busy: 0, chain: Promise.resolve(), scanning: false, creating: false, slipChecks: {}, slipRun: false, tripId: null, trip: null, edraft: null, pickEid: null, pickAs: null, payTo: null, payAmt: 0, homeTrips: [], confirmDel: null, toastT: null, toastMsg: '' };
 
-function loadStore() { try { var o = JSON.parse(localStorage.getItem('bcl.v1')); if (o && o.bills) { o.trips = o.trips || {}; return o; } } catch (e) {} return { bills: {}, trips: {}, name: '' }; }
-function saveStore() { try { localStorage.setItem('bcl.v1', JSON.stringify(S.store)); } catch (e) {} }
+function loadStore() { try { var o = JSON.parse(localStorage.getItem('bcl.v1')); if (o && o.bills) { o.trips = o.trips || {}; o.gone = o.gone || {}; return o; } } catch (e) {} return { bills: {}, trips: {}, gone: {}, name: '' }; }
+function writeStore() { try { localStorage.setItem('bcl.v1', JSON.stringify(S.store)); } catch (e) {} }
+// Saves this device's list of bills and trips. New entries and a changed name get a time, so linked devices
+// can tell which change is newer, and the list is then sent to them.
+var lastName = S.store.name;
+function saveStore() {
+  var now = Date.now();
+  ['bills', 'trips'].forEach(function (k) { Object.keys(S.store[k]).forEach(function (id) { if (!S.store[k][id].at) S.store[k][id].at = now; }); });
+  if (S.store.name !== lastName) { S.store.nameAt = now; lastName = S.store.name; }
+  writeStore(); syncSoon();
+}
+// A bill or trip this device left, or that was deleted: removed here, and remembered so linked devices remove it too.
+function forget(kind, id) { delete S.store[kind][id]; S.store.gone[(kind === 'bills' ? 'b:' : 't:') + id] = Date.now(); }
 function tok(id) { var r = S.store.bills[id]; return r ? r.token : ''; }
 
 async function api(method, url, body, token) {
@@ -60,8 +71,9 @@ function paintModal() {
   var d = document.createElement('div'); d.className = 'modal'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-modal', 'true'); d.setAttribute('data-act', 'closemodal');
   d.innerHTML = '<div class="box"><div class="row between"><b>' + esc(m.title) + '</b><button class="btn small" data-act="closemodal">Close</button></div>' +
     (m.src ? '<img src="' + esc(m.src) + '" alt="' + esc(m.title) + '">' : '') +
-    (m.acts ? '<div class="row" style="flex-wrap:wrap">' + m.acts + '</div>' : '') +
-    (m.text != null ? '<textarea id="mtext" readonly>' + esc(m.text) + '</textarea>' + (m.wa ? '<a class="btn primary" href="' + esc(m.wa) + '" target="_blank" rel="noopener" style="text-align:center;text-decoration:none">Open WhatsApp</a>' : '') + '<button class="btn" data-act="copymodal">Copy message</button>' : '') + '</div>';
+    (m.html || '') +
+    (m.text != null ? '<textarea id="mtext" readonly>' + esc(m.text) + '</textarea>' + (m.wa ? '<a class="btn primary" href="' + esc(m.wa) + '" target="_blank" rel="noopener" style="text-align:center;text-decoration:none">Open WhatsApp</a>' : '') + '<button class="btn" data-act="copymodal">' + esc(m.copyLabel || 'Copy message') + '</button>' : '') +
+    (m.acts ? '<div class="row" style="flex-wrap:wrap">' + m.acts + '</div>' : '') + '</div>';
   o.insertBefore(d, o.firstChild);
 }
 function closeModal() { if (S.modal && S.modal.src && S.modal.src.indexOf('blob:') === 0) URL.revokeObjectURL(S.modal.src); S.modal = null; paintModal(); }
@@ -109,16 +121,74 @@ async function loadHome() {
   S.homeLoaded = false; render();
   var ids = Object.keys(S.store.bills);
   var res = await Promise.all(ids.map(function (id) {
-    return api('GET', '/api/bills/' + id, null, tok(id)).then(function (j) { return j.bill; }, function (e) { if (e.status === 404) { delete S.store.bills[id]; } return null; });
+    return api('GET', '/api/bills/' + id, null, tok(id)).then(function (j) { return j.bill; }, function (e) { if (e.status === 404) { forget('bills', id); } return null; });
   }));
   var tids = Object.keys(S.store.trips);
   var tres = await Promise.all(tids.map(function (id) {
-    return api('GET', '/api/trips/' + id, null, ttok(id)).then(function (j) { return j.trip; }, function (e) { if (e.status === 404) { delete S.store.trips[id]; } return null; });
+    return api('GET', '/api/trips/' + id, null, ttok(id)).then(function (j) { return j.trip; }, function (e) { if (e.status === 404) { forget('trips', id); } return null; });
   }));
   saveStore();
   S.homeTrips = tres.filter(Boolean).sort(function (a, z) { return z.createdAt - a.createdAt; });
   S.home = res.filter(Boolean).sort(function (a, z) { return z.createdAt - a.createdAt; });
   S.homeLoaded = true; render();
+}
+
+/* ---------- linking devices ----------
+ * No accounts: devices that share a sync key (made here, passed on by QR code or link) share their lists of bills and
+ * trips through the server (/api/sync). The key is as private as a payer link. */
+var syncT = null, syncing = false, syncAgain = false;
+function newSyncKey() { var a = new Uint8Array(32); crypto.getRandomValues(a); return btoa(String.fromCharCode.apply(null, a)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+function syncLink() { return location.origin + '/#sync=' + S.store.sync; }
+function syncSoon() { if (!S.store.sync) return; clearTimeout(syncT); syncT = setTimeout(syncNow, 700); }
+function mine() { var st = S.store; return { bills: st.bills, trips: st.trips, gone: st.gone, name: st.name, nameAt: st.nameAt }; }
+async function syncNow() {
+  var key = S.store.sync; if (!key) return;
+  if (syncing) { syncAgain = true; return; }
+  syncing = true;
+  try {
+    var r = await api('PUT', '/api/sync', mine(), key);
+    if (S.store.sync !== key) return;
+    // Merged again with this device's list, in case it changed while the request was out.
+    var m = Sync.merge(r, mine()), changed = !Sync.sameList(m, S.store);
+    S.store.bills = m.bills; S.store.trips = m.trips; S.store.gone = m.gone; S.store.name = m.name; S.store.nameAt = m.nameAt; lastName = m.name;
+    writeStore(); S.syncedAt = Date.now();
+    if (changed && S.view === 'home') loadHome();
+  } catch (e) {
+    if (e.status === 410 && S.store.sync === key) { S.store.sync = ''; writeStore(); toast('This device is no longer linked to your other devices'); if (S.view === 'home') render(); }
+  } finally { syncing = false; if (syncAgain) { syncAgain = false; syncSoon(); } }
+}
+async function showLink() {
+  if (!S.store.sync) { S.store.sync = newSyncKey(); writeStore(); await syncNow(); render(); }
+  var src = '';
+  try { if (!window.qrcode) await loadScript('/ocr/qrcode.js'); var q = window.qrcode(0, 'M'); q.addData(syncLink()); q.make(); src = q.createDataURL(6, 3); } catch (e) {}
+  S.modal = { title: 'Link another device', src: src, copyLabel: 'Copy link',
+    html: '<p class="small">On your other phone or laptop, scan this code with the camera, or open the link below. Your bills and trips will then show up on both.</p><p class="small muted">Keep this code and link to yourself: anyone who opens them can see and manage your bills.</p>',
+    text: syncLink(), acts: '<button class="btn small" data-act="revokesync">' + (S.confirmRevoke ? 'Tap again to turn off this link everywhere' : 'Turn off this link on all devices') + '</button>' };
+  paintModal();
+}
+async function revokeSync() {
+  if (!S.confirmRevoke) { S.confirmRevoke = true; showLink(); return; }
+  S.confirmRevoke = false;
+  try { await api('DELETE', '/api/sync', null, S.store.sync); } catch (e) { return toast(e.message); }
+  S.store.sync = ''; writeStore(); closeModal(); render();
+  toast('Link turned off on all devices. Bills already on each device stay there.');
+}
+// Opening a link made by "Link my devices": asked first, because it shares this device's bills with whoever made the link.
+function offerLink(key) {
+  if (key === S.store.sync) return toast('This device is already linked');
+  S.pendingSync = key;
+  S.modal = { title: 'Link this device?', html: '<p class="small">This link comes from "Link my devices". Linking shares the bills and trips on this device with the device that made it, and theirs with this one.</p><p class="small"><b>Only continue if you made this link yourself on your own phone or laptop.</b> If someone else sent it to you, cancel.</p>',
+    acts: '<button class="btn primary" data-act="linkconfirm">Link this device</button><button class="btn" data-act="closemodal">Cancel</button>' };
+  paintModal();
+}
+async function confirmLink() {
+  var key = S.pendingSync; if (!key) return;
+  S.pendingSync = null; closeModal();
+  S.store.sync = key; writeStore();
+  await syncNow();
+  if (S.store.sync !== key) return;
+  toast('Linked. Bills and trips from your other device are here now.');
+  if (S.view === 'home') loadHome(); else render();
 }
 
 /* ---------- drafts (new bill, or editing one) ---------- */
@@ -215,8 +285,13 @@ function viewHome() {
     var pill = !id ? '<span class="pill none">Not joined</span>' : n > 0 ? '<span class="pill open">Gets back</span>' : n < 0 ? '<span class="pill unpaid">To pay</span>' : '<span class="pill paid">Settled</span>';
     h += '<button class="bill" data-nav="/t/' + tr.id + '"><div class="grow"><div class="t">' + esc(tr.title) + '</div><div class="small muted">Trip · ' + tr.members.length + (tr.members.length === 1 ? ' person · ' : ' people · ') + fmt(Settle.total(tr)) + '</div>' + (id && n ? '<div class="small mono">' + (n > 0 ? 'You get back ' + fmt(n) : 'You owe ' + fmt(-n)) + '</div>' : '') + '</div>' + pill + '</button>';
   });
+  h += devicesCard();
   h += '<p class="foot">Reminders show up when someone opens the bill. To send them on WhatsApp, use the Remind button on a bill.</p>';
   return h;
+}
+function devicesCard() {
+  if (!S.store.sync) return '<div class="card"><div class="row between" style="flex-wrap:wrap;gap:10px"><div class="grow"><b>Use Bei Cin Lah on your phone and laptop</b><div class="small muted">Link your devices once, and every bill and trip you create or join shows up on all of them.</div></div><button class="btn" data-act="linkdev">Link my devices</button></div></div>';
+  return '<div class="card"><div class="row between" style="flex-wrap:wrap;gap:10px"><div class="grow"><b>Devices linked</b><div class="small muted">Bills and trips you create or join here also show up on your other linked devices.</div></div><span class="row" style="gap:6px;flex-wrap:wrap"><button class="btn small" data-act="linkdev">Link another device</button><button class="btn small" data-act="unlinkdev">Unlink this device</button></span></div></div>';
 }
 function receiptTotals(b, c) {
   var h = '<div class="chg"><span>Subtotal</span><span>' + fmt(c.sum) + '</span></div>';
@@ -614,7 +689,7 @@ function tripAction(act, el) {
     case 'tcreate': createTrip(); return true;
     case 'tjoin': joinTrip({ name: ($('#tjname') || {}).value }); return true;
     case 'tclaim': joinTrip({ memberId: uid }); return true;
-    case 'tleave': { var was = (tmem(t, tmyId(t)) || {}).name, tid = t.id; tapi('POST', '/leave').then(function (j) { delete S.store.trips[tid]; if (S.store.name === was) S.store.name = ''; saveStore(); S.trip = j.trip; render(); toast('Done. Pick your own name, or join with it.'); }).catch(fail); return true; }
+    case 'tleave': { var was = (tmem(t, tmyId(t)) || {}).name, tid = t.id; tapi('POST', '/leave').then(function (j) { forget('trips', tid); if (S.store.name === was) S.store.name = ''; saveStore(); S.trip = j.trip; render(); toast('Done. Pick your own name, or join with it.'); }).catch(fail); return true; }
     case 'tcopylink': copyText(tripUrl(t)); return true;
     case 'tcopyprivate': copyText(tripUrl(t) + '#k=' + ttok(t.id)).then(function () { toast('Private link copied. Open it on another phone to use the trip as you.'); }); return true;
     case 'tqr': $('#fileQR').click(); return true;
@@ -639,7 +714,7 @@ function tripAction(act, el) {
     case 'tremove': tapi('DELETE', '/members/' + uid).then(done('Removed')).catch(fail); return true;
     case 'tdelete':
       if (S.confirmDel !== t.id) { S.confirmDel = t.id; toast('Tap Delete trip again to confirm'); setTimeout(function () { S.confirmDel = null; }, 4000); return true; }
-      S.confirmDel = null; tapi('DELETE', '').then(function () { delete S.store.trips[t.id]; saveStore(); nav('/'); }).catch(fail); return true;
+      S.confirmDel = null; tapi('DELETE', '').then(function () { forget('trips', t.id); saveStore(); nav('/'); }).catch(fail); return true;
     case 'epick': $('#fileReceipt').click(); return true;
     case 'emode': if (d.mode === 'items' && edItemsSum(d)) d.amount = fixed(edTotal(d)); d.mode = el.getAttribute('data-mode'); render(); return true;
     case 'eall': t.members.forEach(function (m) { d.among[m.id] = true; }); render(); return true;
@@ -1023,7 +1098,7 @@ document.addEventListener('click', function (e) {
     case 'notifyoff': notifyOff(); break;
     case 'leave': if (b) {
       var bid = b.id, was = (mem(b, myId(b)) || {}).name;
-      bapi('POST', '/leave').then(function (j) { delete S.store.bills[bid]; if (S.store.name === was) S.store.name = ''; saveStore(); S.acting = null; S.bill = j.bill; render(); window.scrollTo(0, 0); toast('Done. Pick your own name, or join with it.'); }).catch(function (x) { toast(x.message); });
+      bapi('POST', '/leave').then(function (j) { forget('bills', bid); if (S.store.name === was) S.store.name = ''; saveStore(); S.acting = null; S.bill = j.bill; render(); window.scrollTo(0, 0); toast('Done. Pick your own name, or join with it.'); }).catch(function (x) { toast(x.message); });
     } break;
     case 'resetlink': if (b) {
       if (S.confirmReset !== uid) { S.confirmReset = uid; toast('Tap Reset link again: ' + nm(b, uid) + ' will need to pick their name again from the bill link'); setTimeout(function () { S.confirmReset = null; }, 4000); break; }
@@ -1037,7 +1112,7 @@ document.addEventListener('click', function (e) {
     case 'copymodal': if (S.modal && S.modal.text != null) copyText(S.modal.text); break;
     case 'zoom': if (b) { var kind = t.getAttribute('data-src'); S.modal = { title: kind === 'qr' ? 'DuitNow QR' : 'Receipt', src: '/api/bills/' + b.id + '/img/' + kind + '?v=' + ((kind === 'qr' && b.qrAt) || b.createdAt) }; paintModal(); } break;
     case 'delete': if (b) {
-      if (S.confirmDel === b.id) { S.confirmDel = null; bapi('DELETE', '').then(function () { delete S.store.bills[b.id]; saveStore(); nav('/'); }).catch(function (x) { toast(x.message); }); }
+      if (S.confirmDel === b.id) { S.confirmDel = null; bapi('DELETE', '').then(function () { forget('bills', b.id); saveStore(); nav('/'); }).catch(function (x) { toast(x.message); }); }
       else { S.confirmDel = b.id; toast('Tap Delete bill again to confirm'); setTimeout(function () { S.confirmDel = null; }, 4000); }
     } break;
     case 'pickreceipt': $('#fileReceipt').click(); break;
@@ -1048,6 +1123,10 @@ document.addEventListener('click', function (e) {
     case 'svc10': d.service = fixed(Math.round(draftSum(d) * 0.10)); render(); break;
     case 'sst6': case 'sst8': d.sst = fixed(Math.round((draftSum(d) + toC(d.service)) * (act === 'sst6' ? 0.06 : 0.08))); render(); break;
     case 'create': createBill(); break;
+    case 'linkdev': S.confirmRevoke = false; showLink(); break;
+    case 'unlinkdev': S.store.sync = ''; writeStore(); render(); toast('This device is unlinked. Your bills here stay, and stop syncing.'); break;
+    case 'revokesync': revokeSync(); break;
+    case 'linkconfirm': confirmLink(); break;
     case 'discarddraft': clearDraft(); S.draft = S.view === 'new' ? newDraft() : null; render(); toast('Unfinished bill cleared'); break;
     case 'summary': if (b) showSummary(b); break;
     case 'sharesum': shareSummary(); break;
@@ -1126,10 +1205,15 @@ setInterval(function () {
   var a = document.activeElement, typing = a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA');
   if (document.hidden || S.busy || S.modal || typing) return;
   if (S.view === 'bill') refresh();
+  if (S.view === 'home' && S.store.sync && Date.now() - (S.syncedAt || 0) > 30000) syncNow();
   if ((S.view === 'trip' && !S.payTo) || S.view === 'picks') refreshTrip();
 }, 6000);
 
 api('GET', '/api/config').then(function (c) { S.cfg = c; if (S.view === 'new' || S.view === 'bill' || S.view === 'trip') render(); }).catch(function () {});
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function () {});
+var sh = location.hash.match(/sync=([A-Za-z0-9_-]{32,64})/);
+if (sh) history.replaceState(null, '', location.pathname);
 route(false);
+if (sh) offerLink(sh[1]); else syncNow();
+document.addEventListener('visibilitychange', function () { if (!document.hidden) syncNow(); });
 })();

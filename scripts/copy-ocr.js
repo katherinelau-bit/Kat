@@ -1,5 +1,6 @@
 'use strict';
-// Copies the on-phone receipt reader (Tesseract.js and its English language file) into public/ocr, so the site serves it itself.
+// Copies the on-phone receipt reader (Tesseract.js and its English language file) and the QR code maker used by
+// "Link my devices" into public/ocr, so the site serves them itself.
 // Netlify runs this as the build command. When self-hosting, run `npm install` then `node scripts/copy-ocr.js` once.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -17,4 +18,5 @@ copy(path.join(tess, 'dist', 'worker.min.js'));
 // The LSTM-only builds, one per WebAssembly feature level; the worker picks the one the phone supports.
 for (const f of fs.readdirSync(core)) if (/-lstm\.wasm\.js$/.test(f)) copy(path.join(core, f));
 copy(path.join(lang, '4.0.0_best_int', 'eng.traineddata.gz'));
-console.log('Receipt reader copied to public/ocr:', fs.readdirSync(out).join(', '));
+copy(path.join(dirOf('qrcode-generator'), 'qrcode.js'));
+console.log('Receipt reader and QR maker copied to public/ocr:', fs.readdirSync(out).join(', '));
