@@ -279,12 +279,43 @@ AEE Er REL BR VT      ig`;
 
 // Real receipt photos that used to read badly, exactly as the phone reader saw them after the photo clean-up
 // (test-receipts.json). Each must give every dish's price and add up to the printed total to the sen.
+// Totals, payments and dates as Malaysian tills print them (learned from a public set of 361 scanned receipts; the
+// texts here are written for the test, not copied).
+function totalsAndDates() {
+  const { parse } = require('./public/receipt-parse.js');
+  const t = (text) => parse(text, {});
+  // A total that includes the tax is the total, not the tax; "Total GST" is the tax; savings and counts are neither.
+  let r = t('KEDAI RUNCIT MAJU\nMineral Water 1.50\nBread 3.40\nTotal Sales (Excluding GST) 4.62\nTotal GST 0.28\nTotal Sales (Inclusive of GST) 4.90\nTotal Savings -1.20\nTotal Quantity 2.00\nCash 5.00\nChange 0.10');
+  assert.deepEqual([r.total, r.sst], [490, 28]);
+  r = t('MAMAK 24\nTeh Tarik 2.80\nRoti Canai 1.80\nTotal RM inc. GST: 4.60\nCash 10.00\nChange 5.40');
+  assert.equal(r.total, 460);
+  // "TOTAL" smudged ("TOTANN", "Tote]") is still the total.
+  assert.equal(t('SHOP\nItem A 10.00\nTOTANN RM 10.00\nCASH RM 10.00').total, 1000);
+  // No total readable: cash paid less the change.
+  assert.equal(t('SHOP\nItem A 12.00\nItem B 3.50\nT0T@L :RM xx.xx\nCASH 20.00\nCHANGE 4.50').total, 1550);
+  // No total, but the subtotal and the tax were printed.
+  assert.equal(t('SHOP\nItem A 50.00\nTotal Sales (Excluding GST) 50.00\nGST 6% 3.00').total, 5300);
+  // A total confirmed by cash and change stands even when a dish is misread (the gap becomes a line to check).
+  r = t('SHOP\nSet A 4.90\nDrink 1.00\nTotal (incl GST) 8.50\nCash Tendered 10.00\nChange 1.50');
+  assert.equal(r.total, 850);
+  // Dates: on a "Date" line, with a time, two-digit years, smudged digits; not an address or a lot number.
+  const d = (line) => parse(line + '\nItem 1.00\nTotal 1.00', {}).date;
+  assert.equal(d('Salesperson: Ali   Date. 09/02/2018'), '2018-02-09');
+  assert.equal(d('Date : (07-03-2018 15:34:15'), '2018-03-07');
+  assert.equal(d('18-03-18 12:09 T3'), '2018-03-18');
+  assert.equal(d('Q2/01/2018  Cashier 123'), '2018-01-02');
+  assert.equal(d('Lot 7F-7.02/7.03, Jalan Gelugor\nDate: 20/03/2018'), '2018-03-20');
+  assert.equal(d('Date: 2018/03/27 23:45'), '2018-03-27');
+  console.log('passed: totals, payments and dates');
+}
+
 function realReceipts() {
   const { parse } = require('./public/receipt-parse.js');
   for (const c of require('./test-receipts.json')) {
     const r = parse(c.text);
     assert.deepEqual(r.items.map((i) => i.line), c.lines, c.receipt);
     assert.ok(r.items.every((i) => /[A-Za-z]{3}/.test(i.name)), c.receipt + ': dish names');
+    if (c.qtys) assert.deepEqual(r.items.map((i) => i.qty), c.qtys, c.receipt + ': quantities');
     if (c.sst !== undefined) assert.equal(r.sst, c.sst, c.receipt + ': SST from its printed rate');
     if (c.total) {
       assert.equal(r.total, c.total, c.receipt);
@@ -590,6 +621,27 @@ async function adminSuite(name, call) {
   assert.equal((await call('DELETE', '/api/admin/staff/aisha', null, owner)).status, 404);
   await call('DELETE', '/api/admin/staff/ben', null, owner);
 
+  // Receipt reports: anyone can send the text a receipt was read as; admins and managers see and delete them, viewers cannot.
+  assert.equal((await call('POST', '/api/receipt-report', { texts: [] })).status, 400);
+  r = await call('POST', '/api/receipt-report', { texts: ['FACE TO FACE\n1 RM 15.10 RM15.10'], got: { items: [{ name: 'Soup', qty: 1, line: 1510 }], total: 7120 }, note: 'missed dishes' });
+  assert.equal(r.status, 200);
+  // The corrected dishes are added when the bill is saved, only with the key the report was given.
+  const { id: repId, key: repKey } = r.body; assert.ok(repId && repKey);
+  const fixed = { items: [{ name: 'Soup', qty: 1, line: 1510 }, { name: 'Pan Mee', qty: 2, line: 2580 }], total: 4090 };
+  assert.equal((await call('PUT', '/api/receipt-report/' + repId, { fixed }, 'x'.repeat(48))).status, 404);
+  assert.equal((await call('PUT', '/api/receipt-report/' + repId, { fixed })).status, 404);
+  assert.equal((await call('PUT', '/api/receipt-report/' + repId, { fixed }, repKey)).status, 200);
+  const viewer = (await call('POST', '/api/admin/staff', { username: 'vee', name: 'Vee', role: 'viewer', password: 'viewer-password-1' }, owner), await login('vee', 'viewer-password-1'));
+  assert.equal((await call('GET', '/api/admin/reports', null, viewer)).status, 403);
+  r = await call('GET', '/api/admin/reports', null, owner);
+  const rep = r.body.reports.find((x) => x.note === 'missed dishes');
+  assert.ok(rep && rep.texts[0].startsWith('FACE TO FACE') && rep.got.total === 7120);
+  assert.deepEqual([rep.fixed.items.length, rep.fixed.total], [2, 4090], 'the corrected dishes are kept');
+  assert.ok(!('key' in rep), 'the report key stays on the server');
+  assert.equal((await call('DELETE', '/api/admin/reports/' + rep.id, null, owner)).status, 200);
+  assert.ok(!(await call('GET', '/api/admin/reports', null, owner)).body.reports.some((x) => x.id === rep.id));
+  await call('DELETE', '/api/admin/staff/vee', null, owner);
+
   // Switched off when no password is set.
   const off = createApi({ store: createBlobStore(fakeBlobs()) });
   assert.equal((await off(new Request('https://example.test/api/admin', { headers: { 'x-token': 'x' } }))).status, 501);
@@ -857,6 +909,7 @@ async function tripItemsSuite(name, call) {
 (async () => {
   receiptParsing();
   realReceipts();
+  totalsAndDates();
   photoCleanup();
   tripMaths();
   syncMerge();
@@ -881,7 +934,7 @@ async function tripItemsSuite(name, call) {
   await syncSuite('self-hosted server (SQLite)', viaHttp, () => { const { DatabaseSync } = require('node:sqlite'); const d = new DatabaseSync(require('node:path').join(process.env.DATA_DIR, 'bei-cin-lah.db')); const t = d.prepare('SELECT id, data FROM syncs').all().map((x) => x.id + ' ' + x.data).join('\n'); d.close(); return t; });
 
   const fb = fakeBlobs();
-  const handle = createApi({ store: createBlobStore(fb), trips: createBlobStore(fb, 'trip/'), syncs: createBlobStore(fb, 'sync/'), stats: createBlobStore(fb, 'stats/'), staff: createBlobStore(fb, 'staff/'), adminKey: process.env.ADMIN_KEY });
+  const handle = createApi({ store: createBlobStore(fb), trips: createBlobStore(fb, 'trip/'), syncs: createBlobStore(fb, 'sync/'), stats: createBlobStore(fb, 'stats/'), staff: createBlobStore(fb, 'staff/'), reports: createBlobStore(fb, 'report/'), adminKey: process.env.ADMIN_KEY });
   const viaFunction = async (method, url, body, token) => {
     const r = await handle(new Request('https://example.test' + url, { method, headers: { 'content-type': 'application/json', 'x-token': token || '' }, body: body ? JSON.stringify(body) : undefined }));
     const ct = r.headers.get('content-type') || '';

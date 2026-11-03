@@ -65,6 +65,7 @@ async function load() {
     j.bills.sort(function (a, z) { return z.createdAt - a.createdAt; }); j.trips.sort(function (a, z) { return z.createdAt - a.createdAt; });
     A.data = j; A.err = '';
     A.staff = j.me.role === 'admin' ? (await call('GET', '/staff')).staff : null;
+    A.reports = j.full ? (await call('GET', '/reports')).reports : null;
   } catch (e) { if (e.status !== 401) A.err = e.message; }
   A.busy = false; paint();
 }
@@ -144,10 +145,37 @@ function dashView() {
   if (codes.length) h += '<h2>Currencies, ' + label + '</h2><div class="tablewrap"><table><thead><tr><th>Currency</th><th class="n">Bills</th><th class="n">Total in RM</th></tr></thead><tbody>' +
     codes.map(function (k) { return '<tr><td>' + esc(k) + '</td><td class="n">' + cur[k].n + '</td><td class="n">' + RM(cur[k].rm) + '</td></tr>'; }).join('') + '</tbody></table></div>';
 
-  if (d.full) h += billsTable(bills) + tripsTable(trips);
+  if (d.full) h += billsTable(bills) + tripsTable(trips) + reportsView();
   else h += '<div class="card" style="margin-top:28px"><b>Numbers only</b><p class="muted small" style="margin:4px 0 0">As a Viewer you see totals and charts, without bill names or people. Ask an admin if you need more.</p></div>';
   if (me.role === 'admin') h += teamView();
   return h;
+}
+
+/* ---------- receipt reports ----------
+ * Receipts people said were read wrong: the text the phone read (no photo, no names), what it made of it, and their note.
+ * Download them all to have the reading rules fixed; delete the ones that are dealt with. */
+function reportsView() {
+  var list = A.reports || [];
+  var h = '<div class="row between" style="margin-top:28px"><h2 style="margin:0">Receipt reports</h2>' + (list.length ? '<button data-act="repdl">Download all (' + list.length + ')</button>' : '') + '</div>';
+  h += '<p class="muted small">Receipts people said the app read wrong: the text the phone read, what the app made of it, and (once they saved the bill) the dishes as they corrected them. No photos or names.</p>';
+  if (!list.length) return h + '<div class="card empty">No reports yet. 🎉</div>';
+  h += '<div class="tablewrap"><table><thead><tr><th>When</th><th>Shop (as read)</th><th class="n">Dishes read</th><th class="n">Total read</th><th>Corrected</th><th>Note</th><th></th></tr></thead><tbody>';
+  list.forEach(function (r) {
+    var shop = (r.texts[0] || '').split('\n').map(function (l) { return l.trim(); }).filter(function (l) { return /[A-Za-z]{3}/.test(l); })[0] || '?', open = A.open['r' + r.id];
+    h += '<tr class="main" data-open="r' + r.id + '" tabindex="0" aria-expanded="' + !!open + '"><td class="muted">' + esc(when(r.createdAt)) + '</td><td><b>' + esc(shop.slice(0, 40)) + '</b></td><td class="n">' + r.got.items.length + '</td><td class="n">' + (r.got.total ? RM(r.got.total) : '–') + '</td><td>' + (r.fixed ? '<span class="pill paid">✓ ' + r.fixed.items.length + ' dishes · ' + RM(r.fixed.total) + '</span>' : '<span class="muted small">not yet</span>') + '</td><td>' + esc(r.note || '') + '</td>' +
+      '<td><button data-act="repdel" data-r="' + esc(r.id) + '" style="color:var(--bad)">' + (A.confirmDel === 'r' + r.id ? 'Tap again to delete' : 'Delete') + '</button></td></tr>';
+    if (open) h += '<tr class="detail"><td colspan="7"><div class="sub"><div><b>What the app read</b><pre style="white-space:pre-wrap;font-size:12px;margin:6px 0 0">' + esc(r.texts[0]) + '</pre></div>' +
+      '<div><b>What it made of it</b>' + readingList(r.got, r.fixed) + (r.fixed ? '<b style="display:block;margin-top:12px">What it should be (as corrected)</b>' + readingList(r.fixed, r.got) : '<p class="small muted">The corrected dishes arrive when the bill is saved.</p>') + '</div></div></td></tr>';
+  });
+  return h + '</tbody></table></div>';
+}
+
+// One reading as a list; lines missing from the other reading (or with another amount) are marked.
+function readingList(a, other) {
+  var key = function (i) { return i.qty + '|' + i.line; }, theirs = other ? other.items.map(key) : null;
+  var li = a.items.map(function (i) { var diff = theirs && theirs.indexOf(key(i)) < 0; return '<li' + (diff ? ' style="color:var(--bad);font-weight:700"' : '') + '>' + esc(i.name) + ' ×' + i.qty + ' · ' + RM(i.line) + (diff ? ' ✱' : '') + '</li>'; }).join('') || '<li>No dishes</li>';
+  var ch = [a.service ? 'service ' + RM(a.service) : '', a.sst ? 'SST ' + RM(a.sst) : '', a.rounding ? 'rounding ' + RM(a.rounding) : ''].filter(Boolean).join(' · ');
+  return '<ul class="small" style="margin:6px 0 0">' + li + '</ul><div class="small muted">' + (ch ? ch + ' · ' : '') + 'total ' + (a.total ? RM(a.total) : '–') + '</div>';
 }
 
 /* ---------- the team (admins only) ---------- */
@@ -304,9 +332,11 @@ document.addEventListener('click', function (e) {
   if (t.hasAttribute('data-range')) { A.range = +t.getAttribute('data-range'); return paint(); }
   if (t.hasAttribute('data-open')) { var k = t.getAttribute('data-open'); A.open[k] = !A.open[k]; return paint(); }
   var act = t.getAttribute('data-act'), u = t.getAttribute('data-u');
-  if (act !== 'remove') A.confirmDel = '';
+  if (act !== 'remove' && act !== 'repdel') A.confirmDel = '';
   if (act === 'refresh') load();
   else if (act === 'csv') csv();
+  else if (act === 'repdl') { var blob = new Blob([JSON.stringify(A.reports, null, 1)], { type: 'application/json' }), a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'bei-cin-lah-receipt-reports-' + dayOf(Date.now()) + '.json'; document.body.appendChild(a); a.click(); a.remove(); }
+  else if (act === 'repdel') { var rk = 'r' + t.getAttribute('data-r'); if (A.confirmDel !== rk) { A.confirmDel = rk; return paint(); } A.confirmDel = ''; call('DELETE', '/reports/' + t.getAttribute('data-r')).then(function () { A.reports = A.reports.filter(function (x) { return 'r' + x.id !== rk; }); paint(); }).catch(function (x) { A.err = x.message; paint(); }); }
   else if (act === 'signout') { setToken(''); A.data = null; A.staff = null; A.err = ''; A.flash = ''; A.pwOpen = false; paint(); }
   else if (act === 'mypw') { A.pwOpen = !A.pwOpen; A.mypw = { old: '', pw: '' }; A.err = ''; paint(); }
   else if (act === 'flashclose') { A.flash = ''; paint(); }

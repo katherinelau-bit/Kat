@@ -48,6 +48,8 @@ tr.detail td{background:var(--bg);padding:14px 16px}
 .sub{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
 .sub table{font-size:13px} .sub th,.sub td{padding:6px 8px}
 .empty{padding:24px;text-align:center;color:var(--muted)}
+/* A row's detail stays as wide as the screen, so its columns stack on a phone instead of hiding off to the side. */
+tr.detail td > .sub{position:sticky;left:16px;max-width:calc(100vw - 66px)}
 @media (max-width:600px){h1{font-size:20px}.tile .v{font-size:22px}.hide-sm{display:none}}
 </style>
 </head>

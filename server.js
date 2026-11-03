@@ -22,6 +22,7 @@ db.exec('CREATE TABLE IF NOT EXISTS trips(id TEXT PRIMARY KEY, data TEXT NOT NUL
 db.exec('CREATE TABLE IF NOT EXISTS syncs(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)');
 db.exec('CREATE TABLE IF NOT EXISTS stats(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)');
 db.exec('CREATE TABLE IF NOT EXISTS staff(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)');
+db.exec('CREATE TABLE IF NOT EXISTS reports(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)');
 const q = {
   getBill: db.prepare('SELECT data FROM bills WHERE id=?'),
   putBill: db.prepare('INSERT INTO bills(id,data,created_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data'),
@@ -41,6 +42,8 @@ const q = {
   getStaff: db.prepare('SELECT data FROM staff WHERE id=?'),
   putStaff: db.prepare('INSERT INTO staff(id,data,created_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data'),
   delStaff: db.prepare('DELETE FROM staff WHERE id=?'), allStaff: db.prepare('SELECT data FROM staff'),
+  putReport: db.prepare('INSERT OR REPLACE INTO reports(id,data,created_at) VALUES(?,?,?)'), delReport: db.prepare('DELETE FROM reports WHERE id=?'),
+  getReport: db.prepare('SELECT data FROM reports WHERE id=?'), allReports: db.prepare('SELECT data FROM reports'),
 };
 const rows = (stmt) => stmt.all().map((r) => JSON.parse(r.data));
 const store = {
@@ -114,7 +117,14 @@ const staff = {
   },
   async all() { return rows(q.allStaff); },
 };
-const handleApi = createApi({ store, trips, syncs, stats, staff, adminKey: process.env.ADMIN_KEY || '', apiKey: process.env.ANTHROPIC_API_KEY || '', model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5' });
+// Receipts people said were read wrong (text only), for the back office.
+const reports = {
+  async getBill(id) { const r = q.getReport.get(id); return r ? JSON.parse(r.data) : null; },
+  async putBill(d) { q.putReport.run(d.id, JSON.stringify(d), d.createdAt); },
+  async delBill(id) { q.delReport.run(id); },
+  async all() { return rows(q.allReports); },
+};
+const handleApi = createApi({ store, trips, syncs, stats, staff, reports, adminKey: process.env.ADMIN_KEY || '', apiKey: process.env.ANTHROPIC_API_KEY || '', model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5' });
 
 async function toRequest(req, url) {
   const chunks = []; let size = 0;

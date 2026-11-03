@@ -88,5 +88,106 @@
    990
   ],
   "text": "Invoice no: 33324                                     ’\nDate: 20/09/2026 18.09                             ORDER\nCashier: cashier\n\nTable Pax: 3                                          1 2\n\n                                                —\n{                                 Qty item\n\n——— nom.\n\n1\n\nPrice (MYR)\n\n———— em.\n\nSN3 BRIRSEIE IT FH (Hot & Sour\n\nSoup Noodles With Fried Pork Chap)\n(22.80/ea)\n\nV SBABSIRTMH (Hot And Sour Fresh\nNoodle Soup) (15.90/ea)\n\nV SN1 SERBIA (Tomato Soup\nNoodle With Minced Meat ) (20.80/\n\ned)\nVO RUBMBEDHE C4/R) (Peach                9.90          —~\nOolong Mik Tea)  (:% cold) (9.90/ea)                        (\n4 Qy\nposing                                 69.40\nST                                                 cv.\npe CHARGL (10%)                                             i! :\ngill rounding                                 0. 00\n—               TTTTT—— 7\nTotal (MYR)                                  80.50        ~~\nVISA                                    80 50\nTe              Ta eB\n\n10%\n\n3576      CHARGE          eee      69.4       4.16\nSER ce  Ss And Ploase Come ppm 894    ~\n"
+ },
+ {
+  "receipt": "Face To Face Noodle House (name, option line, then qty / unit / discount / amount row; Qty+Total Amount line)",
+  "total": 7120,
+  "lines": [
+   1510,
+   2580,
+   1290,
+   1740
+  ],
+  "text": "FACE TO FACE NOODLE HOUSE\nFace To Face Restaurant\n(SA-0025829-W)\n11A-1, Jalan PJU 8/5,\nDamansara Perdana,\n47820 Petaling Jaya.\nTel: 03-7733 7333\nInvoice\nTrans No: 876142                  Pax: 246\nDate:        03/11/2026             Time: 12:53:00PM\nTable: 3-Dineln\nStaff;        MANAGER / ACHI\nUnit        Unit Price          Discount                  Amount\n411-Genki Herbal Chicken Soup™\n*(R) Rice\n1       RM 15.10     0.00               RM15.10\n202-House Specialty Hot and Spicy Pan Mee (Dry)*\n*(L) Upsize\n2          RM 12.90       0.00                     RM25.80\n201-House Specialty Pan Mee (Dry)*\n*(L) Upsize\n1       RM 12.90     0.00               RM12.90\n814-Cham (Cold)\n\n3       RM 5.80      0.00               RM17.40\n= lo adele oT\nQty:          7                 Total Amount:              RM71.20\n\nDiscount:            RMO0.00\nNet Total:              RM71.20\nService Tax:                RM0.00\nGrand Total:             RM71.20\n1\nPayment:           RM71.20\n\neWallet: RM71.20\n\n*Settled at 03/11/2026 1:30:09 PM*\n"
+ },
+ {
+  "receipt": "Layout: Columns: item qty price total",
+  "total": 2600,
+  "lines": [
+   840,
+   360,
+   1250
+  ],
+  "qtys": [
+   3,
+   2,
+   1
+  ],
+  "text": "KEDAI KOPI AH SENG\nItem            Qty   Price   Total\nTeh Tarik        3    2.80    8.40\nRoti Canai       2    1.80    3.60\nNasi Lemak Ayam  1   12.50   12.50\nSubtotal                     24.50\nSST 6%                        1.47\nRounding                      0.03\nTotal                        26.00"
+ },
+ {
+  "receipt": "Layout: Name line, then \"2 @ 6.90  13.80\"",
+  "total": 3183,
+  "lines": [
+   1380,
+   750,
+   600
+  ],
+  "qtys": [
+   2,
+   1,
+   3
+  ],
+  "text": "SUSHI TEI\nSalmon Sushi\n2 @ 6.90       13.80\nChawanmushi\n1 @ 7.50        7.50\nGreen Tea\n3 @ 2.00        6.00\nService Charge 10%    2.73\nSST 6%           1.80\nTOTAL           31.83"
+ },
+ {
+  "receipt": "Layout: \"3 x Kopi O  1.80  5.40\"",
+  "total": 1740,
+  "lines": [
+   540,
+   500,
+   700
+  ],
+  "qtys": [
+   3,
+   2,
+   1
+  ],
+  "text": "MAMAK CORNER\n3 x Kopi O       1.80   5.40\n2 x Roti Telur   2.50   5.00\n1 x Maggi Goreng 7.00   7.00\nTotal           17.40\nCash 20.00\nChange 2.60"
+ },
+ {
+  "receipt": "Layout: Tax code letters + discount column",
+  "total": 2850,
+  "lines": [
+   1900,
+   640,
+   150
+  ],
+  "qtys": [
+   2,
+   2,
+   1
+  ],
+  "text": "RESTORAN SRI MELAKA\nDescription   Qty  U/Price  Disc  Amount\nNasi Goreng Kampung  2  9.50  0.00  19.00 SR\nTeh O Ais Limau  2  3.20  0.00  6.40 SR\nTelur Mata  1  1.50  0.00  1.50 SR\nSub Total  26.90\nSST 6%  1.61\nRounding  -0.01\nGrand Total  28.50"
+ },
+ {
+  "receipt": "Layout: Quantity after the price (\"12.90 x2\")",
+  "total": 5020,
+  "lines": [
+   2580,
+   1390,
+   1050
+  ],
+  "qtys": [
+   2,
+   1,
+   3
+  ],
+  "text": "PAN MEE HOUSE\nPan Mee Dry  12.90 x2  25.80\nChili Pan Mee  13.90 x1  13.90\nBarley Ice  3.50 x3  10.50\nTOTAL  50.20\nVISA 50.20"
+ },
+ {
+  "receipt": "Layout: Smudges and option lines between dishes",
+  "total": 2640,
+  "lines": [
+   1180,
+   500,
+   960
+  ],
+  "qtys": [
+   1,
+   2,
+   3
+  ],
+  "text": "BUBUR CORNER\nUnit Unit Price Amount\nCentury Egg Porridge\n+ Extra Egg\n~ ' .\n1  RM 11.80  RM11.80\nFried Dough Stick\n2  RM 2.50  RM5.00\n- =\nSoy Milk (Cold)\n3  RM 3.20  RM9.60\nQty: 6  Total Amount: RM26.40\nNet Total: RM26.40\nCash: RM50.00"
  }
 ]

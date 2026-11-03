@@ -72,7 +72,7 @@ function paintToast() {
   var o = $('#overlay'), el = o.querySelector('.toast');
   if (!S.toastMsg) { if (el) el.remove(); return; }
   if (!el) { el = document.createElement('div'); el.className = 'toast'; el.setAttribute('role', 'status'); o.appendChild(el); }
-  el.textContent = S.toastMsg;
+  el.innerHTML = '<span class="tm" aria-hidden="true">' + Cute.svg('food') + '</span><span>' + esc(S.toastMsg) + '</span>';
 }
 function paintModal() {
   var o = $('#overlay'), old = o.querySelector('.modal'); if (old) old.remove();
@@ -213,6 +213,8 @@ async function confirmLink() {
 /* ---------- categories ----------
  * Each bill and trip expense has a category (food, transport, hotel...). The form guesses it from the name and items
  * as you type ("Auto"), you can pick another, and what is saved is used by Wrapped. The list is in public/wrapped.js. */
+// The round icon on a bill or trip card: the category's little character (public/cute.js) on a soft pastel circle.
+function cardIcon(c) { return '<span class="bicon" aria-hidden="true" style="background:' + Cute.bg(c.key) + '">' + Cute.svg(c.key) + '</span>'; }
 function catOf(x) { return Wrapped.byKey[Wrapped.categoryKey(x)]; }
 function catLabel(c) { return c.icon + ' ' + c.name; }
 function autoLabel(d, items) { return '✨ Auto: ' + catLabel(Wrapped.byKey[Wrapped.guess({ title: d.title, items: items || d.items || [] })]); }
@@ -268,8 +270,18 @@ function draftSum(d) { var s = 0; d.items.forEach(function (i) { s += lineCents(
 function draftTotal(d) { return draftSum(d) + toC(d.service) + toC(d.sst) + toC(d.rounding); }
 
 /* ---------- views ---------- */
+// The mascot (or any cute character) for empty and loading screens; it bounces while something loads.
+function mascot(kind, bounce) { return '<div class="mascot' + (bounce ? ' bounce' : '') + '" aria-hidden="true">' + Cute.svg(kind) + '</div>'; }
 function topbar() {
   return '<div class="top"><div><button class="brand" data-nav="/" aria-label="Bei Cin Lah home">Bei <span>Cin</span> Lah</button><div class="tag">Split bills and trips with friends. Everyone picks their share. Pay back by DuitNow.</div></div></div>';
+}
+// Everyone who owes something has paid: a happy card with falling confetti.
+var CONFETTI = ['#ff7a45', '#ffd45e', '#7cc4ff', '#ff9fc0', '#7ccf8a', '#a58cf5'];
+function allPaidHtml(b, c) {
+  var owing = b.members.filter(function (m) { return !m.isPayer && c.per[m.id]; });
+  if (!owing.length || !owing.every(function (m) { return m.pay && m.pay.status === 'paid'; })) return '';
+  var bits = ''; for (var i = 0; i < 14; i++) bits += '<i style="left:' + ((i * 37 + 7) % 96) + '%;top:-14px;background:' + CONFETTI[i % 6] + ';animation-delay:' + ((i * 0.23) % 3).toFixed(2) + 's"></i>';
+  return '<div class="card yay">' + bits + mascot('food') + '<b>Everyone has paid! 🎉</b><p class="small muted" style="margin:0">All settled for ' + esc(b.title) + '. Sedap and no hutang.</p></div>';
 }
 function statusPill(m, c, isPayerRow) {
   var s = c.per[m.id], st = (m.pay || {}).status || 'unpaid';
@@ -350,7 +362,7 @@ function whenHtml() {
 }
 function viewHome() {
   var h = topbar();
-  if (!S.homeLoaded) return h + '<div class="card empty"><h3>Loading your bills…</h3></div>';
+  if (!S.homeLoaded) return h + '<div class="card empty">' + mascot('food', true) + '<h3>Loading your bills…</h3></div>';
   var owe = 0, owed = 0;
   S.home.forEach(function (b) {
     var id = myId(b); if (!id) return; var c = Split.calc(b), me = mem(b, id);
@@ -389,7 +401,7 @@ function viewHome() {
   }
   if (!onTrips) {
     h += '<div class="row between"><h2>Your bills</h2><button class="btn primary" data-nav="/new">New bill</button></div>';
-    if (!S.home.length) h += '<div class="card empty"><h3>No bills yet</h3><p class="muted">Add a receipt, send the link to your friends, and let them pick their dishes. Bills you create or join on this phone show up here.</p><button class="btn primary" data-nav="/new">Add a receipt</button></div>';
+    if (!S.home.length) h += '<div class="card empty">' + mascot('food') + '<h3>No bills yet</h3><p class="muted">Add a receipt, send the link to your friends, and let them pick their dishes. Bills you create or join on this phone show up here.</p><button class="btn primary" data-nav="/new">Add a receipt</button></div>';
     list.forEach(function (b) {
       var id = myId(b), c = Split.calc(b), me = id ? mem(b, id) : null, pill = '', line = '';
       var others = b.members.filter(function (m) { return !m.isPayer && c.per[m.id]; });
@@ -397,15 +409,15 @@ function viewHome() {
       else if (me.isPayer) { pill = '<span class="pill open">You paid</span>'; line = others.filter(function (m) { return m.pay.status === 'paid'; }).length + ' of ' + others.length + ' settled'; }
       else if (!c.per[id]) pill = '<span class="pill open">Pick items</span>';
       else { var st = me.pay.status; pill = '<span class="pill ' + st + '">' + (st === 'paid' ? 'Paid' : st === 'sent' ? 'Slip sent' : 'To pay') + '</span>'; line = 'Your share ' + payText(b, owedBy(me, c)); }
-      h += '<button class="bill" data-nav="/b/' + b.id + '"><div class="grow"><div class="t">' + esc(b.title) + '</div><div class="small muted">' + catOf(b).icon + ' ' + esc(b.date || '') + ' · paid by ' + esc(nm(b, b.payerId)) + ' · ' + fmt(c.total, b.currency) + '</div>' + (line ? '<div class="small mono">' + esc(line) + '</div>' : '') + '</div>' + pill + '</button>';
+      h += '<button class="bill" data-nav="/b/' + b.id + '">' + cardIcon(catOf(b)) + '<div class="grow"><div class="t">' + esc(b.title) + '</div><div class="small muted">' + esc(b.date || '') + ' · paid by ' + esc(nm(b, b.payerId)) + ' · ' + fmt(c.total, b.currency) + '</div>' + (line ? '<div class="small mono">' + esc(line) + '</div>' : '') + '</div>' + pill + '</button>';
     });
   } else {
     h += '<div class="row between"><h2>Your trips</h2><button class="btn primary" data-nav="/t/new">New trip</button></div>';
-    if (!S.homeTrips.length) h += '<div class="card empty"><h3>No trips yet</h3><p class="muted">Going away or holding an event where different people pay? Start a trip, everyone adds what they paid, and the app works out who pays whom at the end.</p><button class="btn primary" data-nav="/t/new">Start a trip</button></div>';
+    if (!S.homeTrips.length) h += '<div class="card empty">' + mascot('trip') + '<h3>No trips yet</h3><p class="muted">Going away or holding an event where different people pay? Start a trip, everyone adds what they paid, and the app works out who pays whom at the end.</p><button class="btn primary" data-nav="/t/new">Start a trip</button></div>';
     list.forEach(function (tr) {
       var id = tmyId(tr), n = id ? tripNet(tr, id) : 0;
       var pill = !id ? '<span class="pill none">Not joined</span>' : n > 0 ? '<span class="pill open">Gets back</span>' : n < 0 ? '<span class="pill unpaid">To pay</span>' : '<span class="pill paid">Settled</span>';
-      h += '<button class="bill" data-nav="/t/' + tr.id + '"><div class="grow"><div class="t">' + esc(tr.title) + '</div><div class="small muted">Trip · ' + tr.members.length + (tr.members.length === 1 ? ' person · ' : ' people · ') + fmt(Settle.total(tr)) + '</div>' + (id && n ? '<div class="small mono">' + (n > 0 ? 'You get back ' + fmt(n) : 'You owe ' + fmt(-n)) + '</div>' : '') + '</div>' + pill + '</button>';
+      h += '<button class="bill" data-nav="/t/' + tr.id + '">' + cardIcon({ key: 'trip', icon: '✈️', name: 'Trip' }) + '<div class="grow"><div class="t">' + esc(tr.title) + '</div><div class="small muted">Trip · ' + tr.members.length + (tr.members.length === 1 ? ' person · ' : ' people · ') + fmt(Settle.total(tr)) + '</div>' + (id && n ? '<div class="small mono">' + (n > 0 ? 'You get back ' + fmt(n) : 'You owe ' + fmt(-n)) + '</div>' : '') + '</div>' + pill + '</button>';
     });
   }
   h += devicesCard();
@@ -427,9 +439,9 @@ function receiptTotals(b, c) {
   return h + '<div class="chg tot"><span>Total</span><span>' + fmt(c.total) + '</span></div>';
 }
 function viewBill() {
-  if (S.err) return topbar() + '<div class="card empty"><h3>' + esc(S.err) + '</h3><button class="btn primary" data-nav="/">Back to your bills</button></div>';
+  if (S.err) return topbar() + '<div class="card empty">' + mascot('food') + '<h3>' + esc(S.err) + '</h3><button class="btn primary" data-nav="/">Back to your bills</button></div>';
   var b = S.bill;
-  if (!b) return topbar() + '<div class="card empty"><h3>Opening bill…</h3></div>';
+  if (!b) return topbar() + '<div class="card empty">' + mascot('food', true) + '<h3>Opening bill…</h3></div>';
   var c = Split.calc(b), meId = myId(b), me = meId ? mem(b, meId) : null, isPayer = !!(me && me.isPayer);
   var h = topbar() + alertsFor([b]) + '<button class="btn ghost" data-nav="/">← Your bills</button>';
   h += '<div class="row between" style="align-items:flex-start"><div class="grow"><h2>' + esc(b.title) + '</h2><div class="small muted">' + esc(b.date || '') + ' · paid by ' + esc(nm(b, b.payerId)) + (isPayer ? ' (you)' : '') + '</div><div style="margin-top:6px">' + catTag(b, isPayer ? 'data-act="billcat"' : '') + '</div>' + (fx(b) ? '<div class="small muted">Prices in ' + b.currency + ' · ' + rateText(b) + ' · everyone pays back in RM</div>' : '') + '</div><div style="text-align:right"><div class="mono" style="font-size:20px">' + fmt(c.total) + '</div>' + (fx(b) ? '<div class="small muted mono">≈ ' + rmText(c.total, b) + '</div>' : '') + '</div></div>';
@@ -489,6 +501,7 @@ function viewBill() {
     h += '</div>';
   } else if (ac === meId) h += '<div class="card"><p class="muted">Tap the dishes you ate above. Your share, with service charge and SST, appears here.</p></div>';
 
+  h += allPaidHtml(b, c);
   h += '<div class="card"><div class="row between"><h3>Who has paid</h3>' + (isPayer ? '<span class="row" style="gap:6px;flex-wrap:wrap">' + (matchingSlips(b).length ? '<button class="btn small primary" data-act="confirmmatching">Confirm all matching (' + matchingSlips(b).length + ')</button>' : '') + '<button class="btn small" data-act="remindall">Remind everyone</button></span>' : '') + '</div><div>';
   b.members.forEach(function (m) {
     var s = c.per[m.id], st = m.pay.status;
@@ -502,6 +515,7 @@ function viewBill() {
     h += '<div class="person">' + av(b, m.id) + '<div class="grow"><div><b>' + esc(m.name) + (m.id === meId ? ' (you)' : '') + '</b></div><div class="small muted mono">' + (s ? fmt(owedBy(m, c)) + (fx(b) ? ' · ' + rmText(owedBy(m, c), b) : '') : 'No items yet') + (m.remind && st === 'unpaid' && !m.isPayer ? ' · reminded ' + m.remind.count + '×, last ' + ago(m.remind.at) : '') + '</div>' + (isPayer && st === 'sent' ? slipCheckHtml(m) : '') + '</div>' + statusPill(m, c, m.isPayer) + (acts ? '<div class="acts" style="width:100%;padding-left:38px">' + acts + '</div>' : '') + '</div>';
   });
   h += '</div></div>';
+  if (isPayer) h += notifyOffHtml(b, 'bill');
   h += '<div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="summary">Share summary</button>' + (isPayer ? '<button class="btn small" data-nav="/b/' + b.id + '/edit">Edit items</button>' + (b.hasQr ? '<button class="btn small" data-act="addqr">Change DuitNow QR</button>' : '') + '<button class="btn small" data-act="copyadmin">Copy my payer link (keep private)</button><button class="btn small" data-act="delete" style="color:var(--bad)">Delete bill</button>' : '') + '</div>';
   return h;
 }
@@ -534,17 +548,19 @@ async function fillRate(d) {
 }
 function viewNew() {
   var d = S.draft;
-  if (!d) return topbar() + '<div class="card empty"><h3>Opening bill…</h3></div>';
+  if (!d) return topbar() + '<div class="card empty">' + mascot('food', true) + '<h3>Opening bill…</h3></div>';
   var ed = d.editId, back = ed ? '/b/' + ed : '/';
   var h = topbar() + '<button class="btn ghost" data-nav="' + back + '">' + (ed ? '← Back to the bill' : '← Your bills') + '</button><h2>' + (ed ? 'Edit bill' : 'New bill') + '</h2>';
   if (ed) h += '<div class="alert info"><span>Ticks stay on the dishes you keep. A dish you remove comes off whoever ticked it.' + (d.paidCount ? ' ' + d.paidCount + (d.paidCount > 1 ? ' people have' : ' person has') + ' already paid; their confirmed amount stays the same.' : '') + '</span></div>';
   else if (draftStarted(d)) h += '<p class="small muted">Saved on this phone as you go. <button class="btn small" data-act="discarddraft">Start over</button></p>';
   if (!ed) h += '<div class="card"><h3>1. Receipt</h3><div class="drop"><div class="row">' + (d.receipt ? '<img class="thumb" src="' + d.receipt + '" alt="Receipt photo">' : '') + '<div><b>' + (d.receipt ? 'Receipt attached' : 'Add a photo of the receipt') + '</b><div class="small muted">' + 'The items, service charge and SST are read for you. Check them before you create the bill. Friends can view the photo.' + '</div></div></div><div class="row"><button class="btn" data-act="pickreceipt">' + (d.receipt ? 'Change photo' : 'Choose photo') + '</button>' + (d.scanFile ? '<button class="btn primary" data-act="scan"' + (S.scanning ? ' disabled' : '') + '>' + (S.scanning ? 'Reading…' : 'Read receipt') + '</button>' : '') + '</div></div>' +
-    (d.scanNote ? '<p class="small" style="color:var(--warn)">' + esc(d.scanNote) + '</p>' : '') + '</div>';
+    (d.scanNote ? '<p class="small" style="color:var(--warn)">' + esc(d.scanNote) + '</p>' : '') + reportLinkHtml() + '</div>';
   h += '<div class="card"><h3>' + (ed ? 'Items' : '2. Items') + '</h3><div class="two"><div class="field"><label for="f-title">Bill name</label><input type="text" id="f-title" data-f="title" maxlength="80" value="' + esc(d.title) + '" placeholder="e.g. Thai dinner"></div><div class="field"><label for="f-date">Date</label><input type="date" id="f-date" data-f="date" value="' + esc(d.date) + '"></div>' + catSelect('f-cat', 'data-f', d) + '<div class="field"><label for="f-payer">Your name (you paid)</label><input type="text" id="f-payer" data-f="payerName" maxlength="40"' + (ed ? ' disabled' : '') + ' value="' + esc(d.payerName) + '" placeholder="e.g. Katherine"></div></div>';
   h += currencyHtml(d, 'f');
+  // The receipt photo, one tap away, to check the dishes against.
+  if (d.receipt && !ed) h += '<details class="peek"><summary>📷 Compare with the receipt</summary><img src="' + d.receipt + '" alt="Receipt photo"></details>';
   h += '<div class="items"><div class="irow h"><span>Item</span><span>Qty</span><span>Each (' + CUR + ')</span><span style="text-align:right">Total</span><span></span></div>';
-  d.items.forEach(function (it, i) { h += '<div class="irow"><input type="text" aria-label="Item name" data-i="' + i + '" data-k="name" value="' + esc(it.name) + '" placeholder="Item"><input type="number" min="1" aria-label="Quantity" data-i="' + i + '" data-k="qty" value="' + esc(it.qty) + '"><input type="number" step="0.01" min="0" inputmode="decimal" aria-label="Price of one" data-i="' + i + '" data-k="price" value="' + esc(it.price) + '" placeholder="0.00"><span class="mono small" data-line="' + i + '">' + fmt(lineCents(it)) + '</span><button class="x" data-act="rmitem" data-i="' + i + '" aria-label="Remove item">×</button></div>'; });
+  d.items.forEach(function (it, i) { if (it.guess) h += '<div class="unsure-note">⚠️ Check this one: its price was worked out, not read</div>'; h += '<div class="irow' + (it.guess ? ' unsure' : '') + '"><input type="text" aria-label="Item name" data-i="' + i + '" data-k="name" value="' + esc(it.name) + '" placeholder="Item"><input type="number" min="1" aria-label="Quantity" data-i="' + i + '" data-k="qty" value="' + esc(it.qty) + '"><input type="number" step="0.01" min="0" inputmode="decimal" aria-label="Price of one" data-i="' + i + '" data-k="price" value="' + esc(it.price) + '" placeholder="0.00"><span class="mono small" data-line="' + i + '">' + fmt(lineCents(it)) + '</span><button class="x" data-act="rmitem" data-i="' + i + '" aria-label="Remove item">×</button></div>'; });
   h += '</div><div><button class="btn small" data-act="additem">Add item</button></div><p class="small muted">Enter the price of one. The bill multiplies it by the quantity, so picking a dish with quantity 2 gives you both.</p></div>';
   h += '<div class="card"><h3>' + (ed ? 'Charges' : '3. Charges') + '</h3><div class="two"><div class="field"><label for="f-svc">Service charge (' + CUR + ')</label><input type="number" step="0.01" id="f-svc" data-f="service" value="' + esc(d.service) + '" placeholder="0.00"></div><div class="field"><label for="f-sst">' + (CUR === 'MYR' ? 'SST' : 'Tax') + ' (' + CUR + ')</label><input type="number" step="0.01" id="f-sst" data-f="sst" value="' + esc(d.sst) + '" placeholder="0.00"></div><div class="field"><label for="f-rnd">Rounding (' + CUR + ')</label><input type="number" step="0.01" id="f-rnd" data-f="rounding" value="' + esc(d.rounding) + '" placeholder="0.00"></div></div><div class="chips"><button class="btn small" data-act="svc10">Service 10%</button><button class="btn small" data-act="sst6">SST 6%</button><button class="btn small" data-act="sst8">SST 8%</button></div><p class="small muted">The quick buttons work out the amount from your items. SST is applied after service charge. Match them to what the receipt prints.</p><div class="receipt"><div class="chg tot" id="draftTotals">' + totalsHtml(d) + '</div></div></div>';
   if (!ed) h += '<div class="card"><h3>4. Your DuitNow QR</h3><div class="drop"><div class="row">' + (d.qr ? '<img class="thumb" src="' + d.qr + '" alt="Your DuitNow QR" style="background:#fff">' : '') + '<div><b>' + (d.qr ? 'QR attached' : 'Add your DuitNow QR picture') + '</b><div class="small muted">Friends scan it to pay you the exact amount.</div></div></div><button class="btn" data-act="pickqr">' + (d.qr ? 'Change' : 'Choose picture') + '</button></div></div>';
@@ -636,9 +652,9 @@ function splitText(t, e) {
   return (e.mode === 'exact' ? 'Split by amount: ' : 'Split equally: ') + names.join(', ');
 }
 function viewTrip() {
-  if (S.err) return topbar() + '<div class="card empty"><h3>' + esc(S.err) + '</h3><button class="btn primary" data-nav="/trips">Back to your trips</button></div>';
+  if (S.err) return topbar() + '<div class="card empty">' + mascot('food') + '<h3>' + esc(S.err) + '</h3><button class="btn primary" data-nav="/trips">Back to your trips</button></div>';
   var t = S.trip;
-  if (!t) return topbar() + '<div class="card empty"><h3>Opening trip…</h3></div>';
+  if (!t) return topbar() + '<div class="card empty">' + mascot('food', true) + '<h3>Opening trip…</h3></div>';
   var meId = tmyId(t), me = meId ? tmem(t, meId) : null, bal = Settle.balances(t), total = Settle.total(t);
   var h = topbar() + '<button class="btn ghost" data-nav="/trips">← Your trips</button>';
   h += '<div class="row between" style="align-items:flex-start"><div class="grow"><h2>' + esc(t.title) + '</h2><div class="small muted">Trip · ' + t.members.length + (t.members.length === 1 ? ' person · ' : ' people · ') + t.expenses.length + ' expense' + (t.expenses.length === 1 ? '' : 's') + '</div></div><div class="mono" style="font-size:20px">' + fmt(total) + '</div></div>';
@@ -665,6 +681,7 @@ function viewTrip() {
   h += tripSettleHtml(t, meId);
   h += tripExpensesHtml(t, me);
   h += tripPeopleHtml(t, me, bal);
+  h += notifyOffHtml(t, 'trip');
   h += '<div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="tcopyprivate">Copy my private link (keep private)</button>' + (me.hasQr ? '<button class="btn small" data-act="tqr">Change my DuitNow QR</button>' : '') + (me.isOwner ? '<button class="btn small" data-act="tdelete" style="color:var(--bad)">Delete trip</button>' : '') + '</div>';
   return h;
 }
@@ -946,7 +963,7 @@ function tripSettleHtml(t, meId) {
   var tr = Settle.transfers(Settle.balances(t)), pending = t.payments.filter(function (p) { return p.status === 'sent'; }), done = t.payments.filter(function (p) { return p.status === 'paid'; });
   var h = '<div class="card"><h3>Settle up</h3>';
   if (!t.expenses.length) return h + '<p class="muted">Add expenses below. Who pays whom shows up here.</p></div>';
-  if (!tr.length && !pending.length) h += '<p style="color:var(--good);font-weight:700">Everyone is settled up.</p>';
+  if (!tr.length && !pending.length) h += '<div class="row" style="gap:10px"><span class="bicon" style="position:static;background:' + Cute.bg('trip') + '">' + Cute.svg('trip') + '</span><b style="color:var(--good)">Everyone is settled up! 🎉</b></div>';
   tr.forEach(function (x) {
     var mine = x.from === meId, toMe = x.to === meId;
     h += '<div class="person">' + tav(t, x.from) + '<div class="grow"><div><b>' + esc(mine ? 'You' : tnm(t, x.from)) + '</b> ' + (mine ? 'pay' : 'pays') + ' <b>' + esc(toMe ? 'you' : tnm(t, x.to)) + '</b></div></div><span class="mono">' + fmt(x.amount) + '</span>' +
@@ -1030,7 +1047,7 @@ function remainHtml(d) {
 }
 function viewExpense() {
   var t = S.trip, d = S.edraft;
-  if (!t || !d) return topbar() + '<div class="card empty"><h3>Opening trip…</h3></div>';
+  if (!t || !d) return topbar() + '<div class="card empty">' + mascot('food', true) + '<h3>Opening trip…</h3></div>';
   var h = topbar() + '<button class="btn ghost" data-nav="/t/' + t.id + '">← ' + esc(t.title) + '</button><h2>' + (d.eid ? 'Edit expense' : 'Add expense') + '</h2>';
   h += '<div class="card"><h3>Receipt (optional)</h3><div class="drop"><div class="row">' + (d.receipt ? '<img class="thumb" src="' + d.receipt + '" alt="Receipt photo">' : '') + '<div><b>' + (d.receipt ? 'Receipt attached' : d.hadReceipt ? 'Receipt already attached' : 'Add a photo of the receipt') + '</b><div class="small muted">The dishes, total, shop name and date are read for you. Everyone in the trip can view the photo.</div></div></div><button class="btn" data-act="epick"' + (d.scanning ? ' disabled' : '') + '>' + (d.scanning ? 'Reading…' : d.receipt ? 'Change photo' : 'Choose photo') + '</button></div>' + (d.scanNote ? '<p class="small" style="color:var(--warn)">' + esc(d.scanNote) + '</p>' : '') + '</div>';
   h += '<div class="card"><h3>What and who paid</h3><div class="two"><div class="field"><label for="e-title">What was it</label><input type="text" id="e-title" data-ef="title" maxlength="80" value="' + esc(d.title) + '" placeholder="e.g. Hotel, dinner, petrol"></div><div class="field"><label for="e-date">Date</label><input type="date" id="e-date" data-ef="date" value="' + esc(d.date) + '"></div>' + catSelect('e-cat', 'data-ef', d) +
@@ -1108,7 +1125,7 @@ async function scanExpense(f) {
     if (r.items.length) {
       // Dishes found: split by items, so everyone can pick what they ate.
       d.mode = 'items';
-      d.items = r.items.map(function (i) { return { name: i.name, qty: String(i.qty), price: fixed(i.each), line: i.line }; });
+      d.items = r.items.map(function (i) { var it = { name: i.name, qty: String(i.qty), price: fixed(i.each), line: i.line }; if (i.filled) it.guess = 1; return it; });
       d.service = r.service ? fixed(r.service) : ''; d.sst = r.sst ? fixed(r.sst) : ''; d.rounding = r.rounding ? fixed(r.rounding) : '';
       var gap = r.total ? r.total - edTotal(d) : 0;
       d.scanNote = switched + 'Read ' + r.items.length + ' item' + (r.items.length > 1 ? 's' : '') + (r.merchant ? ' at ' + r.merchant : '') + (Math.abs(gap) > 1 ? '. They come to ' + fmt(edTotal(d)) + ' but the receipt says ' + fmt(r.total) + ', so check the items.' : ', matching the total of ' + fmt(edTotal(d)) + '.') + ' Please check them against the receipt.';
@@ -1210,10 +1227,10 @@ function pickExpense() { var t = S.trip; return t && t.expenses.filter(function 
 function canPickFor(t, me, e) { return me && (me.isOwner || e.addedBy === me.id || e.paidBy === me.id); }
 function viewPicks() {
   var t = S.trip, e = pickExpense();
-  if (!t) return topbar() + '<div class="card empty"><h3>Opening trip…</h3></div>';
-  if (!e || e.mode !== 'items') return topbar() + '<div class="card empty"><h3>This expense is not split by items.</h3><button class="btn primary" data-nav="/t/' + t.id + '">Back to the trip</button></div>';
+  if (!t) return topbar() + '<div class="card empty">' + mascot('food', true) + '<h3>Opening trip…</h3></div>';
+  if (!e || e.mode !== 'items') return topbar() + '<div class="card empty">' + mascot('food') + '<h3>This expense is not split by items.</h3><button class="btn primary" data-nav="/t/' + t.id + '">Back to the trip</button></div>';
   var meId = tmyId(t), me = meId ? tmem(t, meId) : null;
-  if (!me) return topbar() + '<div class="card empty"><h3>Join the trip first</h3><button class="btn primary" data-nav="/t/' + t.id + '">Open the trip</button></div>';
+  if (!me) return topbar() + '<div class="card empty">' + mascot('food') + '<h3>Join the trip first</h3><button class="btn primary" data-nav="/t/' + t.id + '">Open the trip</button></div>';
   var c = Settle.itemsCalc(e), others = canPickFor(t, me, e), ac = others && S.pickAs && tmem(t, S.pickAs) ? S.pickAs : meId;
   var picks = (e.picks && e.picks[ac]) || [], my = c.per[ac];
   var h = topbar() + '<button class="btn ghost" data-nav="/t/' + t.id + '">← ' + esc(t.title) + '</button>';
@@ -1334,7 +1351,7 @@ function saveSummary() {
 /* ---------- receipt reading ----------
  * Free and on the phone with Tesseract.js (served from /ocr, loaded on first use, language file cached by the browser).
  * If the server's Claude reader is switched on it is tried first, and the phone takes over if it fails. */
-var ocr = null, ocrTry = '';
+var ocr = null, ocrTry = '', ocrTexts = [];
 function loadScript(src) { return new Promise(function (ok, no) { var s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); }); }
 function scanLabel(t) { var b = document.querySelector('[data-act="scan"]'); if (b) b.textContent = t; }
 function ocrWorker() {
@@ -1368,11 +1385,13 @@ function blackWhite(c) {
 async function readOnPhone(file, currency) {
   var bmp = await createImageBitmap(file), c = photoCanvas(bmp, 0);
   var P = window.ReceiptParse, w = await ocrWorker(), r = null, n = 0;
+  ocrTexts = [];
   // Each try is read twice, from the text as Tesseract lines it up and from word positions; the reading that adds up best wins.
   var read = async function (canvas, psm) {
     ocrTry = ++n > 1 ? ' (try ' + n + ')' : '';
     await w.setParameters({ tessedit_pageseg_mode: psm });
     var out = (await w.recognize(canvas, {}, { text: true, blocks: true })).data;
+    ocrTexts.push(out.text);
     var o = { currency: currency };
     r = P.best([r, P.parse(out.text, o), P.parse(P.rowsFromBlocks(out.blocks), o)]);
     return out;
@@ -1394,32 +1413,50 @@ async function readOnPhone(file, currency) {
  * The payer's phone subscribes once per bill; the server sends "Victor sent RM 25.40" when a slip arrives.
  * iPhones allow this only for the app opened from the Home Screen. */
 function pushReady() { return !!(S.cfg.push && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window); }
+// Notifications are asked about once per phone (bcl.notify): "on" turns them on, "later" stops asking. Once on, new
+// bills and trips are switched on quietly (no second question); a small "Turn off" link sits at the bottom of the page.
+function notifyPref() { try { return localStorage.getItem('bcl.notify') || ''; } catch (e) { return ''; } }
+function setNotifyPref(v) { try { localStorage.setItem('bcl.notify', v); } catch (e) {} }
+var autoNotified = {};
 function notifyHtml(b, what) {
   what = what || 'someone sends a payment slip';
-  if (b.notify) return '<div class="alert info"><span>You get a notification when ' + what + '.</span><button class="btn small" data-act="notifyoff">Turn off</button></div>';
-  if (pushReady()) return '<div class="alert info"><span>Get a notification on this phone when ' + what + '.</span><button class="btn small primary" data-act="notifyon">Notify me</button></div>';
+  var pref = notifyPref();
+  if (b.notify) { if (pref !== 'on') setNotifyPref('on'); return ''; }
+  if (pref === 'later' || pref === 'off') return '';
+  if (pref === 'on' && pushReady() && Notification.permission === 'granted') {
+    if (!autoNotified[b.id]) { autoNotified[b.id] = 1; setTimeout(function () { notifyOn(b, true); }, 0); }
+    return '';
+  }
+  var later = '<button class="btn small" data-act="notifylater">Not now</button>';
+  if (pushReady()) return '<div class="alert info"><span>Get a notification on this phone when ' + what + '?</span><span class="row" style="gap:6px"><button class="btn small primary" data-act="notifyon">Notify me</button>' + later + '</span></div>';
   var ios = /iPhone|iPad|iPod/.test(navigator.userAgent), standalone = navigator.standalone || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-  if (ios && !standalone && S.cfg.push) return '<div class="alert info"><span>To get a notification when someone pays: tap Share, then Add to Home Screen. Open Bei Cin Lah from your Home Screen and turn it on there.</span></div>';
+  if (ios && !standalone && S.cfg.push) return '<div class="alert info"><span>To get a notification when someone pays: tap Share, then Add to Home Screen. Open Bei Cin Lah from your Home Screen and turn it on there.</span>' + later + '</div>';
   return '';
 }
+// The quiet line at the bottom: turn off, or turn back on after "Not now".
+function notifyOffHtml(b, kind) {
+  if (b.notify) return '<p class="small muted notifyline">🔔 Notifications on · <button class="linkbtn" data-act="notifyoff">Turn off</button></p>';
+  var pref = notifyPref();
+  return (pref === 'later' || pref === 'off') && pushReady() ? '<p class="small muted notifyline">🔕 Notifications off · <button class="linkbtn" data-act="notifyon">Turn on</button></p>' : '';
+}
 function keyBytes(k) { var s = atob((k + '==='.slice((k.length + 3) % 4)).replace(/-/g, '+').replace(/_/g, '/')), a = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a; }
-async function notifyOn(b) {
+async function notifyOn(b, quiet) {
   try {
-    if ((await Notification.requestPermission()) !== 'granted') return toast('Notifications are blocked. Allow them in your phone settings for this site.');
+    if ((await Notification.requestPermission()) !== 'granted') { if (!quiet) toast('Notifications are blocked. Allow them in your phone settings for this site.'); return; }
     var reg = await navigator.serviceWorker.ready, sub = await reg.pushManager.getSubscription();
     if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes((await api('GET', '/api/push/key')).key) });
     var body = { subscription: sub.toJSON() };
     if (S.view === 'trip') setTrip(await tapi('POST', '/push', body)); else setBill(await bapi('POST', '/push', body));
-    render();
-    toast('Done. This phone will ring when someone sends a slip.');
-  } catch (e) { toast(e.status ? e.message : 'Could not turn on notifications on this phone'); }
+    setNotifyPref('on'); render();
+    if (!quiet) toast('Done. This phone will ring when someone sends a slip.');
+  } catch (e) { if (!quiet) toast(e.status ? e.message : 'Could not turn on notifications on this phone'); }
 }
 async function notifyOff(b) {
   try {
     var reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null, sub = reg && reg.pushManager ? await reg.pushManager.getSubscription() : null;
     var body = sub ? { endpoint: sub.endpoint } : { all: true };
     if (S.view === 'trip') setTrip(await tapi('DELETE', '/push', body)); else setBill(await bapi('DELETE', '/push', body));
-    render(); toast('Notifications turned off');
+    setNotifyPref('off'); render(); toast('Notifications turned off. They stay off for new bills too.');
   } catch (e) { toast(e.message || 'Could not turn off notifications'); }
 }
 
@@ -1470,16 +1507,42 @@ function abroadFrom(d, r) {
   d.currency = r.currency; d.rate = ''; d.rateNote = ''; CUR = r.currency; fillRate(d);
   return 'This receipt is in ' + r.currency + ', so the currency was switched. ';
 }
+// "Didn't read right?": sends the text the phone read (no photo, no names) so the reading rules can be fixed.
+function reportLinkHtml() {
+  var l = S.lastScan; if (!l) return '';
+  return '<p class="small" style="margin:6px 0 0">' + (l.sent ? '✓ Sent. Thank you, this helps the app read receipts better.' : '<button class="linkbtn" data-act="scanreport">Didn\'t read right? Send it so we can fix it</button>') + '</p>';
+}
+function askReport() {
+  S.modal = { title: 'Send this receipt reading?', html: '<p class="small" style="margin:0">This sends only the <b>text the app read</b> from the receipt (shop name, dishes and prices), what it made of it and, when you save the bill, the dishes as you corrected them, so the reading can be fixed for receipts like this. <b>No photo and no names.</b></p>' +
+    '<div class="field"><label for="rnote">What was wrong? (optional)</label><input type="text" id="rnote" maxlength="200" placeholder="e.g. missed the drinks, wrong total"></div>',
+    acts: '<button class="btn primary" data-act="scanreportsend">Send</button><button class="btn" data-act="closemodal">Cancel</button>' };
+  paintModal();
+}
+// The dishes and charges as they stand in the form: what the receipt really says, once the person has corrected them.
+function draftReading(d) {
+  return { items: d.items.filter(function (i) { return lineCents(i) > 0; }).map(function (i) { return { name: i.name, qty: Math.max(1, parseInt(i.qty, 10) || 1), line: lineCents(i) }; }),
+    service: toC(d.service), sst: toC(d.sst), rounding: toC(d.rounding), total: draftTotal(d) };
+}
+async function sendReport() {
+  var l = S.lastScan, note = ($('#rnote') || {}).value || ''; if (!l) return;
+  closeModal();
+  try {
+    var j = await api('POST', '/api/receipt-report', { texts: l.texts, got: l.got, fixed: S.draft ? draftReading(S.draft) : null, note: note });
+    l.sent = true; l.id = j.id; l.key = j.key; render(); toast('Sent. Thank you!');
+  }
+  catch (e) { toast(e.message || 'Could not send. Try again later.'); }
+}
 async function doScan() {
   var d = S.draft; if (!d.scanFile || S.scanning) return;
-  S.scanning = true; d.scanNote = ''; render();
+  S.scanning = true; d.scanNote = ''; S.lastScan = null; ocrTexts = []; render();
   try {
     var r = null;
     if (S.cfg.scan) { try { r = await api('POST', '/api/scan', { image: b64(await toJpeg(d.scanFile, 1400, 600000)) }); } catch (e) { r = null; } }
     if (!r || !r.items.length) r = await readOnPhone(d.scanFile, d.currency);
+    if (ocrTexts.length) S.lastScan = { texts: ocrTexts.slice(), got: { items: r.items.map(function (i) { return { name: i.name, qty: i.qty, line: i.line }; }), total: r.total } };
     if (!r.items.length) throw new Error('empty');
     var switched = abroadFrom(d, r);
-    d.items = r.items.map(function (i) { return { name: i.name, qty: String(i.qty), price: fixed(i.each), line: i.line }; });
+    d.items = r.items.map(function (i) { var it = { name: i.name, qty: String(i.qty), price: fixed(i.each), line: i.line }; if (i.filled) it.guess = 1; return it; });
     d.service = r.service ? fixed(r.service) : ''; d.sst = r.sst ? fixed(r.sst) : ''; d.rounding = r.rounding ? fixed(r.rounding) : '';
     if (r.merchant && (!d.title || d.title === d.scanTitle)) d.title = d.scanTitle = r.merchant;
     if (r.date) d.date = r.date;
@@ -1491,7 +1554,10 @@ async function doScan() {
     d.scanNote = switched + (!r.total ? 'Read ' + r.items.length + ' items coming to ' + fmt(draftTotal(d)) + ', but the receipt total could not be read. Please check the items and charges against the receipt.'
       : Math.abs(gap) > 1 ? 'Read ' + r.items.length + ' items. They come to ' + fmt(draftTotal(d)) + ' but the receipt says ' + fmt(r.total) + ', so ' + fmt(Math.abs(gap)) + (gap > 0 ? ' is missing or misread' : ' too much was read') + '. Please check the items against the receipt.'
       : 'Read ' + r.items.length + ' items, matching the receipt total of ' + fmt(draftTotal(d)) + '.' + worked + ' Please check them against the receipt.');
-  } catch (e) { d.scanNote = e.status === 429 ? 'Too many scans for now. Type the items instead.' : 'Could not read that receipt. Try a clearer, flatter photo, or type the items.'; }
+  } catch (e) {
+    d.scanNote = e.status === 429 ? 'Too many scans for now. Type the items instead.' : 'Could not read that receipt. Try a clearer, flatter photo, or type the items.';
+    if (!S.lastScan && ocrTexts.length) S.lastScan = { texts: ocrTexts.slice(), got: { items: [], total: 0 } };
+  }
   S.scanning = false; render();
 }
 async function createBill() {
@@ -1513,7 +1579,9 @@ async function createBill() {
   try {
     var r = await api('POST', '/api/bills', { title: d.title, date: d.date, category: catToSave(d, items), payerName: d.payerName, currency: money.currency, rate: money.rate, items: items, service: toC(d.service), sst: toC(d.sst), rounding: toC(d.rounding), qr: b64(d.qr), receipt: b64(d.receipt) });
     S.store.bills[r.id] = { token: r.token, memberId: r.memberId, title: d.title }; S.store.name = d.payerName.trim(); saveStore();
-    S.draft = null; clearDraft(); S.creating = false; toast('Bill created. Send the link to your friends.'); nav('/b/' + r.id);
+    // The receipt was reported as read wrong: its report gets the dishes as they were finally saved (the right answer).
+    var ls = S.lastScan; if (ls && ls.id) api('PUT', '/api/receipt-report/' + ls.id, { fixed: draftReading(d) }, ls.key).catch(function () {});
+    S.draft = null; clearDraft(); S.lastScan = null; S.creating = false; toast('Bill created. Send the link to your friends.'); nav('/b/' + r.id);
   } catch (e) { S.creating = false; toast(e.message); render(); }
 }
 function joinBill(body) {
@@ -1624,6 +1692,7 @@ document.addEventListener('click', function (e) {
     case 'confirmmatching': if (b) confirmMatching(b); break;
     case 'notifyon': notifyOn(); break;
     case 'notifyoff': notifyOff(); break;
+    case 'notifylater': setNotifyPref('later'); render(); toast('OK. You can turn them on later at the bottom of a bill.'); break;
     case 'leave': if (b) {
       var bid = b.id, was = (mem(b, myId(b)) || {}).name;
       bapi('POST', '/leave').then(function (j) { forget('bills', bid); if (S.store.name === was) S.store.name = ''; saveStore(); S.acting = null; S.bill = j.bill; render(); window.scrollTo(0, 0); toast('Done. Pick your own name, or join with it.'); }).catch(function (x) { toast(x.message); });
@@ -1656,6 +1725,8 @@ document.addEventListener('click', function (e) {
     case 'wrapshare': shareWrapped(t.getAttribute('data-ym')); break;
     case 'cardshare': shareCard(); break;
     case 'cardsave': saveCard(); break;
+    case 'scanreport': askReport(); break;
+    case 'scanreportsend': sendReport(); break;
     case 'clearsearch': S.q = ''; render(); var qi = $('#q'); if (qi) qi.focus(); break;
     case 'whentoggle': S.whenOpen = !S.whenOpen; render(); break;
     case 'whenclear': S.when = 'all'; S.wFrom = ''; S.wTo = ''; render(); break;
@@ -1663,7 +1734,7 @@ document.addEventListener('click', function (e) {
     case 'unlinkdev': S.store.sync = ''; writeStore(); render(); toast('This device is unlinked. Your bills here stay, and stop syncing.'); break;
     case 'revokesync': revokeSync(); break;
     case 'linkconfirm': confirmLink(); break;
-    case 'discarddraft': clearDraft(); S.draft = S.view === 'new' ? newDraft() : null; render(); toast('Unfinished bill cleared'); break;
+    case 'discarddraft': clearDraft(); S.lastScan = null; S.draft = S.view === 'new' ? newDraft() : null; render(); toast('Unfinished bill cleared'); break;
     case 'summary': if (b) showSummary(b); break;
     case 'sharesum': shareSummary(); break;
     case 'savesum': saveSummary(); break;
@@ -1679,7 +1750,7 @@ document.addEventListener('input', function (e) {
   if (t.hasAttribute('data-f')) d[t.getAttribute('data-f')] = t.value;
   else if (t.hasAttribute('data-i')) {
     var ix = +t.getAttribute('data-i'), it = d.items[ix]; it[t.getAttribute('data-k')] = t.value;
-    if (t.getAttribute('data-k') !== 'name') delete it.line;
+    if (t.getAttribute('data-k') !== 'name') { delete it.line; delete it.guess; }
     var ce = document.querySelector('[data-line="' + ix + '"]'); if (ce) ce.textContent = fmt(lineCents(it));
   } else return;
   var el = $('#draftTotals'); if (el) el.innerHTML = totalsHtml(d);
@@ -1712,7 +1783,7 @@ $('#fileReceipt').addEventListener('change', async function (e) {
     return;
   }
   if (!S.draft) return;
-  try { S.draft.receipt = await toJpeg(f, 700, 70000); S.draft.scanFile = f; S.draft.scanNote = ''; render(); doScan(); }
+  try { S.draft.receipt = await toJpeg(f, 700, 70000); S.draft.scanFile = f; S.draft.scanNote = ''; S.lastScan = null; render(); doScan(); }
   catch (x) { toast('That file is not a readable image'); }
 });
 $('#fileQR').addEventListener('change', async function (e) {
