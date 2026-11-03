@@ -106,7 +106,10 @@ async function route(scroll) {
   }
   if ((m = p.match(/^\/t\/([a-z0-9]+)$/))) { S.view = 'trip'; if (S.tripId !== m[1]) { S.trip = null; S.payTo = null; } S.tripId = m[1]; render(); await loadTrip(m[1]); return; }
   if ((m = p.match(/^\/b\/([a-z0-9]+)$/))) { S.view = 'bill'; S.billId = m[1]; S.bill = null; render(); await loadBill(m[1]); return; }
-  S.view = 'home'; await loadHome();
+  // Switching between the Bills and Trips pages shows what is already loaded.
+  var was = S.view; S.view = 'home'; S.homeTab = p === '/trips' ? 'trips' : 'bills';
+  if (was === 'home' && S.homeLoaded) { render(); return; }
+  await loadHome();
 }
 async function loadBill(id) {
   var h = location.hash.match(/k=([a-f0-9]{48})/);
@@ -145,7 +148,7 @@ async function loadHome() {
   saveStore();
   S.homeTrips = tres.filter(Boolean).sort(function (a, z) { return z.createdAt - a.createdAt; });
   S.home = res.filter(Boolean).sort(function (a, z) { return z.createdAt - a.createdAt; });
-  S.homeLoaded = true; render();
+  S.homeLoaded = true; rememberNames(); render(); setTimeout(prepWrapped, 300);
 }
 
 /* ---------- linking devices ----------
@@ -207,7 +210,32 @@ async function confirmLink() {
 }
 
 /* ---------- drafts (new bill, or editing one) ---------- */
-function newDraft() { return { title: '', date: new Date().toISOString().slice(0, 10), payerName: S.store.name || '', currency: 'MYR', rate: '', rateNote: '', items: [{ name: '', qty: '1', price: '' }], service: '', sst: '', rounding: '', qr: '', receipt: '', scanFile: null, scanTotal: 0, scanNote: '' }; }
+/* ---------- categories ----------
+ * Each bill and trip expense has a category (food, transport, hotel...). The form guesses it from the name and items
+ * as you type ("Auto"), you can pick another, and what is saved is used by Wrapped. The list is in public/wrapped.js. */
+function catOf(x) { return Wrapped.byKey[Wrapped.categoryKey(x)]; }
+function catLabel(c) { return c.icon + ' ' + c.name; }
+function autoLabel(d, items) { return '✨ Auto: ' + catLabel(Wrapped.byKey[Wrapped.guess({ title: d.title, items: items || d.items || [] })]); }
+// The picker in a form: "Auto" plus every category. `attr` is the form's data attribute (data-f or data-ef).
+function catSelect(id, attr, d) {
+  return '<div class="field catfield"><label for="' + id + '">Category</label><select id="' + id + '" ' + attr + '="category"><option value="">' + esc(autoLabel(d)) + '</option>' +
+    Wrapped.cats.map(function (c) { return '<option value="' + c.key + '"' + (d.category === c.key ? ' selected' : '') + '>' + esc(catLabel(c)) + '</option>'; }).join('') + '</select></div>';
+}
+// After the name or items change, the "Auto" choice shows the new guess.
+function refreshAuto(id, d) { var o = document.querySelector('#' + id + ' option[value=""]'); if (o) o.textContent = autoLabel(d); }
+// What is saved: the category picked, or the guess.
+function catToSave(d, items) { return d.category || Wrapped.guess({ title: d.title, items: items || [] }); }
+// A small tag; a button that opens the picker for whoever may change it.
+function catTag(x, act) {
+  var c = catOf(x);
+  return act ? '<button class="cattag" ' + act + ' aria-label="Category: ' + esc(c.name) + '. Change">' + esc(catLabel(c)) + ' <span aria-hidden="true">✎</span></button>' : '<span class="cattag">' + esc(catLabel(c)) + '</span>';
+}
+function pickCategory(current, attrs) {
+  S.modal = { title: 'Category', html: '<div class="catgrid">' + Wrapped.cats.map(function (c) {
+    return '<button class="btn' + (c.key === current ? ' primary' : '') + '" data-act="catpick" data-cat="' + c.key + '" ' + attrs + '>' + esc(catLabel(c)) + '</button>'; }).join('') + '</div>' };
+  paintModal();
+}
+function newDraft() { return { category: '', title: '', date: new Date().toISOString().slice(0, 10), payerName: S.store.name || '', currency: 'MYR', rate: '', rateNote: '', items: [{ name: '', qty: '1', price: '' }], service: '', sst: '', rounding: '', qr: '', receipt: '', scanFile: null, scanTotal: 0, scanNote: '' }; }
 // An unfinished new bill is kept on this phone, so a refresh or a closed tab does not lose a scanned receipt.
 var DRAFT_KEY = 'bcl.draft.v1', DRAFT_FIELDS = ['title', 'date', 'payerName', 'currency', 'rate', 'rateNote', 'items', 'service', 'sst', 'rounding', 'qr', 'receipt', 'scanTotal', 'scanNote', 'scanTitle'], draftT = null;
 function saveDraft() {
@@ -229,7 +257,7 @@ async function startEdit(id) {
   try {
     var b = (await api('GET', '/api/bills/' + id, null, tok(id))).bill, me = myId(b);
     if (!me || !mem(b, me).isPayer) { toast('Only the person who paid can edit this bill'); nav('/b/' + id); return; }
-    S.draft = { editId: id, title: b.title, date: b.date, payerName: nm(b, b.payerId), currency: b.currency || 'MYR', rate: fx(b) ? String(b.rate) : '', rateNote: '', service: b.service ? fixed(b.service) : '', sst: b.sst ? fixed(b.sst) : '', rounding: b.rounding ? fixed(b.rounding) : '',
+    S.draft = { editId: id, title: b.title, date: b.date, category: b.category || '', payerName: nm(b, b.payerId), currency: b.currency || 'MYR', rate: fx(b) ? String(b.rate) : '', rateNote: '', service: b.service ? fixed(b.service) : '', sst: b.sst ? fixed(b.sst) : '', rounding: b.rounding ? fixed(b.rounding) : '',
       items: b.items.map(function (i) { return { id: i.id, name: i.name, qty: String(i.qty), price: fixed(Math.round(i.price / i.qty)), line: i.price }; }),
       paidCount: b.members.filter(function (m) { return !m.isPayer && m.pay.status === 'paid'; }).length, qr: '', receipt: '', scanFile: null, scanTotal: 0, scanNote: '' };
   } catch (e) { toast(e.status === 404 ? 'This bill was not found' : 'Could not open this bill'); nav('/'); return; }
@@ -241,7 +269,7 @@ function draftTotal(d) { return draftSum(d) + toC(d.service) + toC(d.sst) + toC(
 
 /* ---------- views ---------- */
 function topbar() {
-  return '<div class="top"><div><button class="brand" data-nav="/" aria-label="Bei Cin Lah home">Bei <span>Cin</span> Lah</button><div class="tag">Scan the receipt. Everyone picks what they ate. Pay by DuitNow.</div></div></div>';
+  return '<div class="top"><div><button class="brand" data-nav="/" aria-label="Bei Cin Lah home">Bei <span>Cin</span> Lah</button><div class="tag">Split bills and trips with friends. Everyone picks their share. Pay back by DuitNow.</div></div></div>';
 }
 function statusPill(m, c, isPayerRow) {
   var s = c.per[m.id], st = (m.pay || {}).status || 'unpaid';
@@ -280,6 +308,46 @@ function found(words) {
   var w = words.toLowerCase(), nums = ' ' + w.split(/[^a-z0-9]+/).join(' ') + ' ';
   return S.q.toLowerCase().split(/\s+/).filter(Boolean).every(function (x) { return /^\d+$/.test(x) ? nums.indexOf(' ' + x + ' ') > -1 : w.indexOf(x) > -1; });
 }
+/* ---------- date filter on the home lists ----------
+ * All time, the last 7 or 30 days (counting today), last week (Monday to Sunday), last month (the whole calendar month),
+ * or dates picked from the calendar (either end can be left open).
+ * A bill counts by its date; a trip when any of its expenses (or the day it was made) falls in the range. */
+var WHEN = [['all', 'All time'], ['7', 'Last 7 days'], ['lastweek', 'Last week'], ['30', 'Last 30 days'], ['lastmonth', 'Last month'], ['custom', '📅 Pick dates']];
+function whenRange() {
+  var w = S.when || 'all', today = todayMY(), back = function (n) { return new Date(Date.parse(today) - n * 864e5).toISOString().slice(0, 10); };
+  if (w === '7') return { from: back(6), to: today };
+  if (w === '30') return { from: back(29), to: today };
+  if (w === 'lastweek') { var dow = (new Date(today + 'T00:00:00Z').getUTCDay() + 6) % 7; return { from: back(dow + 7), to: back(dow + 1) }; }
+  if (w === 'lastmonth') { var first = today.slice(0, 8) + '01', end = back(dayDiff(first, today) + 1); return { from: end.slice(0, 8) + '01', to: end }; }
+  if (w === 'custom' && (S.wFrom || S.wTo)) return { from: S.wFrom || '', to: S.wTo || '' };
+  return null;
+}
+function whenLabel(r) {
+  var o = WHEN.filter(function (x) { return x[0] === S.when; })[0];
+  return S.when === 'custom' ? (r.from && r.to ? shortDate(r.from).replace(/ \d{4}$/, '') + ' – ' + shortDate(r.to) : r.from ? 'From ' + shortDate(r.from) : 'Up to ' + shortDate(r.to)) : o[1];
+}
+function whenText(r) {
+  if (S.when === '7') return 'in the last 7 days';
+  if (S.when === '30') return 'in the last 30 days';
+  if (S.when === 'lastweek') return 'last week (' + shortDate(r.from).replace(/ \d{4}$/, '') + ' – ' + shortDate(r.to).replace(/ \d{4}$/, '') + ')';
+  if (S.when === 'lastmonth') return 'in ' + MONTHS_FULL[+r.from.slice(5, 7) - 1] + ' ' + r.from.slice(0, 4);
+  var d = function (iso) { return shortDate(iso); };
+  return r.from && r.to ? (r.from === r.to ? 'on ' + d(r.from) : 'from ' + d(r.from) + ' to ' + d(r.to)) : r.from ? 'from ' + d(r.from) : 'up to ' + d(r.to);
+}
+function billSpan(b) { var d = b.date || new Date(b.createdAt + 8 * 3600e3).toISOString().slice(0, 10); return [d, d]; }
+function tripSpan(t) {
+  var ds = t.expenses.map(function (e) { return e.date; }).filter(Boolean).concat([new Date(t.createdAt + 8 * 3600e3).toISOString().slice(0, 10)]).sort();
+  return [ds[0], ds[ds.length - 1]];
+}
+function inWhen(span, r) { return !r || ((!r.from || span[1] >= r.from) && (!r.to || span[0] <= r.to)); }
+// The date options open from the search box or the 📅 button; closed, an active filter shows as a tag to clear.
+function whenHtml() {
+  var w = S.when || 'all', r = whenRange();
+  if (!S.whenOpen) return r ? '<div><button class="cattag" data-act="whenclear" aria-label="Remove date filter">📅 ' + esc(whenLabel(r)) + ' <span aria-hidden="true">✕</span></button></div>' : '';
+  var h = '<div class="chips datechips" role="group" aria-label="Filter by date">' + WHEN.map(function (o) { return '<button class="btn small' + (w === o[0] ? ' primary' : '') + '" aria-pressed="' + (w === o[0]) + '" data-act="when" data-when="' + o[0] + '">' + o[1] + '</button>'; }).join('') + '</div>';
+  if (w === 'custom') h += '<div class="two whenpick"><div class="field"><label for="wfrom">From</label><input type="date" id="wfrom" data-when-end="wFrom" value="' + esc(S.wFrom || '') + '"' + (S.wTo ? ' max="' + esc(S.wTo) + '"' : '') + '></div><div class="field"><label for="wto">To</label><input type="date" id="wto" data-when-end="wTo" value="' + esc(S.wTo || '') + '"' + (S.wFrom ? ' min="' + esc(S.wFrom) + '"' : '') + '></div></div>';
+  return h;
+}
 function viewHome() {
   var h = topbar();
   if (!S.homeLoaded) return h + '<div class="card empty"><h3>Loading your bills…</h3></div>';
@@ -291,42 +359,55 @@ function viewHome() {
   });
   S.homeTrips.forEach(function (t) { var id = tmyId(t); if (!id) return; var n = tripNet(t, id); if (n > 0) owed += n; else owe -= n; });
   var ud = loadDraft();
-  if (draftStarted(ud)) {
+  if (draftStarted(ud) && S.homeTab !== 'trips') {
     var n = ud.items.filter(function (i) { return lineCents(i) > 0; }).length;
     h += '<div class="alert info"><span>You have an unfinished bill' + (ud.title ? ': <b>' + esc(ud.title) + '</b>' : '') + (n ? ' (' + n + ' item' + (n > 1 ? 's' : '') + ', ' + fmt(draftTotal(ud)) + ')' : '') + '.</span><span class="row" style="gap:6px"><button class="btn small primary" data-nav="/new">Continue</button><button class="btn small" data-act="discarddraft">Discard</button></span></div>';
   }
-  h += alertsFor(S.home);
+  var onTrips = S.homeTab === 'trips';
+  if (!onTrips) { h += alertsFor(S.home); h += wrappedHomeHtml(); }
   h += '<div class="tiles"><div class="tile owe"><div class="k">You owe</div><div class="v">' + fmt(owe) + '</div></div><div class="tile owed"><div class="k">Owed to you</div><div class="v">' + fmt(owed) + '</div></div></div>';
-  var bills = S.home, trips = S.homeTrips;
+  // Bills and trips each have their own page: / and /trips.
+  var toPay = S.homeTrips.filter(function (t) { var id = tmyId(t); return id && tripNet(t, id) < 0; }).length;
+  h += '<div class="hometabs" role="tablist" aria-label="Bills or trips">' +
+    '<button role="tab" aria-selected="' + !onTrips + '" data-nav="/">🧾 Bills <span class="cnt">' + S.home.length + '</span></button>' +
+    '<button role="tab" aria-selected="' + onTrips + '" data-nav="/trips">✈️ Trips <span class="cnt">' + S.homeTrips.length + '</span>' + (toPay && !onTrips ? '<span class="dot" title="You owe on ' + toPay + ' trip' + (toPay > 1 ? 's' : '') + '"></span>' : '') + '</button></div>';
+  var all = onTrips ? S.homeTrips : S.home, list = all, kind = onTrips ? 'trip' : 'bill';
   S.q = S.q || '';
-  if (S.home.length + S.homeTrips.length > 1) {
-    h += '<div class="search"><input type="search" id="q" data-search value="' + esc(S.q) + '" placeholder="Search by bill name, date or friend" aria-label="Search bills and trips" autocomplete="off" enterkeyhint="search">' + (S.q ? '<button class="btn small" data-act="clearsearch">Clear</button>' : '') + '</div>';
-    if (S.q.trim()) {
-      bills = S.home.filter(function (b) { return found(billWords(b)); }); trips = S.homeTrips.filter(function (t) { return found(tripWords(t)); });
-      h += '<p class="small muted" style="margin:0">' + (bills.length + trips.length ? 'Found ' + bills.length + ' bill' + (bills.length === 1 ? '' : 's') + ' and ' + trips.length + ' trip' + (trips.length === 1 ? '' : 's') + ' for "' + esc(S.q.trim()) + '".' : 'Nothing matches "' + esc(S.q.trim()) + '". Try a shorter word, a month like "nov", or a friend\'s name.') + '</p>';
+  if (all.length > 1) {
+    h += '<div class="search"><input type="search" id="q" data-search value="' + esc(S.q) + '" placeholder="Search ' + kind + 's or friends" aria-label="Search ' + kind + 's" autocomplete="off" enterkeyhint="search">' + (S.q ? '<button class="btn small" data-act="clearsearch">Clear</button>' : '') +
+      '<button class="btn small datebtn' + (whenRange() ? ' on' : '') + '" data-act="whentoggle" aria-expanded="' + !!S.whenOpen + '" aria-label="Filter by date" title="Filter by date">📅</button></div>';
+    h += whenHtml();
+    var dated = whenRange();
+    if (S.q.trim() || dated) {
+      var keep = function (x, isTrip) { return (!S.q.trim() || found(isTrip ? tripWords(x) : billWords(x))) && inWhen(isTrip ? tripSpan(x) : billSpan(x), dated); };
+      list = all.filter(function (x) { return keep(x, onTrips); });
+      var other = (onTrips ? S.home.filter(function (b) { return keep(b, false); }) : S.homeTrips.filter(function (t) { return keep(t, true); })).length;
+      var what = (S.q.trim() ? ' for "' + esc(S.q.trim()) + '"' : '') + (dated ? ' ' + esc(whenText(dated)) : '');
+      h += '<p class="small muted" style="margin:0">' + (list.length ? 'Found ' + list.length + ' ' + kind + (list.length === 1 ? '' : 's') + what + '.' : 'No ' + kind + 's' + what + '.' + (S.q.trim() ? ' Try a shorter word or a friend\'s name.' : ' Try a longer period.')) +
+        (other ? ' <a href="' + (onTrips ? '/' : '/trips') + '" data-nav="' + (onTrips ? '/' : '/trips') + '">' + other + (onTrips ? ' bill' : ' trip') + (other === 1 ? '' : 's') + ' match too</a>.' : '') + '</p>';
     }
   }
-  var searching = !!S.q.trim();
-  h += '<div class="row between"><h2>Your bills</h2><button class="btn primary" data-nav="/new">New bill</button></div>';
-  if (!S.home.length && !searching) h += '<div class="card empty"><h3>No bills yet</h3><p class="muted">Add a receipt, send the link to your friends, and let them pick their dishes. Bills you create or join on this phone show up here.</p><button class="btn primary" data-nav="/new">Add a receipt</button></div>';
-  if (searching && S.home.length && !bills.length) h += '<p class="small muted" style="margin:0">No bills match.</p>';
-  bills.forEach(function (b) {
-    var id = myId(b), c = Split.calc(b), me = id ? mem(b, id) : null, pill = '', line = '';
-    var others = b.members.filter(function (m) { return !m.isPayer && c.per[m.id]; });
-    if (!me) pill = '<span class="pill none">Not joined</span>';
-    else if (me.isPayer) { pill = '<span class="pill open">You paid</span>'; line = others.filter(function (m) { return m.pay.status === 'paid'; }).length + ' of ' + others.length + ' settled'; }
-    else if (!c.per[id]) pill = '<span class="pill open">Pick items</span>';
-    else { var st = me.pay.status; pill = '<span class="pill ' + st + '">' + (st === 'paid' ? 'Paid' : st === 'sent' ? 'Slip sent' : 'To pay') + '</span>'; line = 'Your share ' + payText(b, owedBy(me, c)); }
-    h += '<button class="bill" data-nav="/b/' + b.id + '"><div class="grow"><div class="t">' + esc(b.title) + '</div><div class="small muted">' + esc(b.date || '') + ' · paid by ' + esc(nm(b, b.payerId)) + ' · ' + fmt(c.total, b.currency) + '</div>' + (line ? '<div class="small mono">' + esc(line) + '</div>' : '') + '</div>' + pill + '</button>';
-  });
-  h += '<div class="row between"><h2>Your trips</h2><button class="btn primary" data-nav="/t/new">New trip</button></div>';
-  if (!S.homeTrips.length && !searching) h += '<div class="card empty"><h3>No trips yet</h3><p class="muted">Going away or holding an event where different people pay? Start a trip, everyone adds what they paid, and the app works out who pays whom at the end.</p></div>';
-  if (searching && S.homeTrips.length && !trips.length) h += '<p class="small muted" style="margin:0">No trips match.</p>';
-  trips.forEach(function (tr) {
-    var id = tmyId(tr), n = id ? tripNet(tr, id) : 0;
-    var pill = !id ? '<span class="pill none">Not joined</span>' : n > 0 ? '<span class="pill open">Gets back</span>' : n < 0 ? '<span class="pill unpaid">To pay</span>' : '<span class="pill paid">Settled</span>';
-    h += '<button class="bill" data-nav="/t/' + tr.id + '"><div class="grow"><div class="t">' + esc(tr.title) + '</div><div class="small muted">Trip · ' + tr.members.length + (tr.members.length === 1 ? ' person · ' : ' people · ') + fmt(Settle.total(tr)) + '</div>' + (id && n ? '<div class="small mono">' + (n > 0 ? 'You get back ' + fmt(n) : 'You owe ' + fmt(-n)) + '</div>' : '') + '</div>' + pill + '</button>';
-  });
+  if (!onTrips) {
+    h += '<div class="row between"><h2>Your bills</h2><button class="btn primary" data-nav="/new">New bill</button></div>';
+    if (!S.home.length) h += '<div class="card empty"><h3>No bills yet</h3><p class="muted">Add a receipt, send the link to your friends, and let them pick their dishes. Bills you create or join on this phone show up here.</p><button class="btn primary" data-nav="/new">Add a receipt</button></div>';
+    list.forEach(function (b) {
+      var id = myId(b), c = Split.calc(b), me = id ? mem(b, id) : null, pill = '', line = '';
+      var others = b.members.filter(function (m) { return !m.isPayer && c.per[m.id]; });
+      if (!me) pill = '<span class="pill none">Not joined</span>';
+      else if (me.isPayer) { pill = '<span class="pill open">You paid</span>'; line = others.filter(function (m) { return m.pay.status === 'paid'; }).length + ' of ' + others.length + ' settled'; }
+      else if (!c.per[id]) pill = '<span class="pill open">Pick items</span>';
+      else { var st = me.pay.status; pill = '<span class="pill ' + st + '">' + (st === 'paid' ? 'Paid' : st === 'sent' ? 'Slip sent' : 'To pay') + '</span>'; line = 'Your share ' + payText(b, owedBy(me, c)); }
+      h += '<button class="bill" data-nav="/b/' + b.id + '"><div class="grow"><div class="t">' + esc(b.title) + '</div><div class="small muted">' + catOf(b).icon + ' ' + esc(b.date || '') + ' · paid by ' + esc(nm(b, b.payerId)) + ' · ' + fmt(c.total, b.currency) + '</div>' + (line ? '<div class="small mono">' + esc(line) + '</div>' : '') + '</div>' + pill + '</button>';
+    });
+  } else {
+    h += '<div class="row between"><h2>Your trips</h2><button class="btn primary" data-nav="/t/new">New trip</button></div>';
+    if (!S.homeTrips.length) h += '<div class="card empty"><h3>No trips yet</h3><p class="muted">Going away or holding an event where different people pay? Start a trip, everyone adds what they paid, and the app works out who pays whom at the end.</p><button class="btn primary" data-nav="/t/new">Start a trip</button></div>';
+    list.forEach(function (tr) {
+      var id = tmyId(tr), n = id ? tripNet(tr, id) : 0;
+      var pill = !id ? '<span class="pill none">Not joined</span>' : n > 0 ? '<span class="pill open">Gets back</span>' : n < 0 ? '<span class="pill unpaid">To pay</span>' : '<span class="pill paid">Settled</span>';
+      h += '<button class="bill" data-nav="/t/' + tr.id + '"><div class="grow"><div class="t">' + esc(tr.title) + '</div><div class="small muted">Trip · ' + tr.members.length + (tr.members.length === 1 ? ' person · ' : ' people · ') + fmt(Settle.total(tr)) + '</div>' + (id && n ? '<div class="small mono">' + (n > 0 ? 'You get back ' + fmt(n) : 'You owe ' + fmt(-n)) + '</div>' : '') + '</div>' + pill + '</button>';
+    });
+  }
   h += devicesCard();
   h += '<p class="foot">Reminders show up when someone opens the bill. To send them on WhatsApp, use the Remind button on a bill.</p>';
   return h;
@@ -351,7 +432,7 @@ function viewBill() {
   if (!b) return topbar() + '<div class="card empty"><h3>Opening bill…</h3></div>';
   var c = Split.calc(b), meId = myId(b), me = meId ? mem(b, meId) : null, isPayer = !!(me && me.isPayer);
   var h = topbar() + alertsFor([b]) + '<button class="btn ghost" data-nav="/">← Your bills</button>';
-  h += '<div class="row between" style="align-items:flex-start"><div class="grow"><h2>' + esc(b.title) + '</h2><div class="small muted">' + esc(b.date || '') + ' · paid by ' + esc(nm(b, b.payerId)) + (isPayer ? ' (you)' : '') + '</div>' + (fx(b) ? '<div class="small muted">Prices in ' + b.currency + ' · ' + rateText(b) + ' · everyone pays back in RM</div>' : '') + '</div><div style="text-align:right"><div class="mono" style="font-size:20px">' + fmt(c.total) + '</div>' + (fx(b) ? '<div class="small muted mono">≈ ' + rmText(c.total, b) + '</div>' : '') + '</div></div>';
+  h += '<div class="row between" style="align-items:flex-start"><div class="grow"><h2>' + esc(b.title) + '</h2><div class="small muted">' + esc(b.date || '') + ' · paid by ' + esc(nm(b, b.payerId)) + (isPayer ? ' (you)' : '') + '</div><div style="margin-top:6px">' + catTag(b, isPayer ? 'data-act="billcat"' : '') + '</div>' + (fx(b) ? '<div class="small muted">Prices in ' + b.currency + ' · ' + rateText(b) + ' · everyone pays back in RM</div>' : '') + '</div><div style="text-align:right"><div class="mono" style="font-size:20px">' + fmt(c.total) + '</div>' + (fx(b) ? '<div class="small muted mono">≈ ' + rmText(c.total, b) + '</div>' : '') + '</div></div>';
 
   if (!me) {
     var open = b.members.filter(function (m) { return !m.claimed; });
@@ -371,7 +452,7 @@ function viewBill() {
     h += '<div class="card"><h3>Send this link to your friends</h3><div class="linkbox"><input type="text" id="sharelink" readonly aria-label="Bill link" value="' + esc(link) + '"><button class="btn" data-act="copylink">Copy link</button><a class="btn primary" href="https://wa.me/?text=' + encodeURIComponent(msg) + '" target="_blank" rel="noopener" style="text-decoration:none">WhatsApp</a></div><p class="small muted">Friends open the link, type their name and pick their dishes. No sign-up.</p></div>';
     if (!b.hasQr) h += '<div class="alert"><span>Add your DuitNow QR so friends can scan it and pay you.</span><button class="btn small primary" data-act="addqr">Add DuitNow QR</button></div>';
     h += notifyHtml(b);
-    h += '<div class="card"><h3>People on this bill</h3><div class="chips">' + b.members.map(function (m) { return '<button class="btn small' + (m.id === ac ? ' primary' : '') + '" data-act="acting" data-uid="' + m.id + '">' + esc(m.id === meId ? 'You' : m.name) + '</button>'; }).join('') + '</div><p class="small muted">Tap a name, then tap the dishes that person ate. A dish picked by 2 or more people is split equally. Add friends here if you want to pick for them.</p><div class="row"><input type="text" id="gname" aria-label="Friend name" placeholder="Friend name" maxlength="40"><button class="btn" data-act="addguest">Add friend</button></div>' + ((!acm.isPayer && ac !== meId) ? '<div><button class="btn small" data-act="rmguest" style="color:var(--bad)">Remove ' + esc(acm.name) + '</button></div>' : '') + '</div>';
+    h += '<div class="card"><h3>People on this bill</h3><div class="chips">' + b.members.map(function (m) { return '<button class="btn small' + (m.id === ac ? ' primary' : '') + '" data-act="acting" data-uid="' + m.id + '">' + esc(m.id === meId ? 'You' : m.name) + '</button>'; }).join('') + '</div><p class="small muted">Tap a name, then tap the dishes that person ate. A dish picked by 2 or more people is split equally. Add friends here if you want to pick for them.</p><div class="row"><input type="text" id="gname" aria-label="Friend name" placeholder="Friend name" maxlength="40" list="gname-list" autocomplete="off"><button class="btn" data-act="addguest">Add friend</button></div>' + nameHelp('gname', b.members.map(function (m) { return m.name; })) + ((!acm.isPayer && ac !== meId) ? '<div><button class="btn small" data-act="rmguest" style="color:var(--bad)">Remove ' + esc(acm.name) + '</button></div>' : '') + '</div>';
   }
 
   h += '<div class="card"><div class="row between"><h3>' + (ac === meId ? 'Tap what you ate' : 'Tap what ' + esc(acm.name) + ' ate') + '</h3>' + (b.hasReceipt ? '<button class="btn small" data-act="zoom" data-src="receipt">View receipt</button>' : '') + '</div><div class="receipt">';
@@ -460,7 +541,7 @@ function viewNew() {
   else if (draftStarted(d)) h += '<p class="small muted">Saved on this phone as you go. <button class="btn small" data-act="discarddraft">Start over</button></p>';
   if (!ed) h += '<div class="card"><h3>1. Receipt</h3><div class="drop"><div class="row">' + (d.receipt ? '<img class="thumb" src="' + d.receipt + '" alt="Receipt photo">' : '') + '<div><b>' + (d.receipt ? 'Receipt attached' : 'Add a photo of the receipt') + '</b><div class="small muted">' + 'The items, service charge and SST are read for you. Check them before you create the bill. Friends can view the photo.' + '</div></div></div><div class="row"><button class="btn" data-act="pickreceipt">' + (d.receipt ? 'Change photo' : 'Choose photo') + '</button>' + (d.scanFile ? '<button class="btn primary" data-act="scan"' + (S.scanning ? ' disabled' : '') + '>' + (S.scanning ? 'Reading…' : 'Read receipt') + '</button>' : '') + '</div></div>' +
     (d.scanNote ? '<p class="small" style="color:var(--warn)">' + esc(d.scanNote) + '</p>' : '') + '</div>';
-  h += '<div class="card"><h3>' + (ed ? 'Items' : '2. Items') + '</h3><div class="two"><div class="field"><label for="f-title">Bill name</label><input type="text" id="f-title" data-f="title" maxlength="80" value="' + esc(d.title) + '" placeholder="e.g. Thai dinner"></div><div class="field"><label for="f-date">Date</label><input type="date" id="f-date" data-f="date" value="' + esc(d.date) + '"></div><div class="field"><label for="f-payer">Your name (you paid)</label><input type="text" id="f-payer" data-f="payerName" maxlength="40"' + (ed ? ' disabled' : '') + ' value="' + esc(d.payerName) + '" placeholder="e.g. Katherine"></div></div>';
+  h += '<div class="card"><h3>' + (ed ? 'Items' : '2. Items') + '</h3><div class="two"><div class="field"><label for="f-title">Bill name</label><input type="text" id="f-title" data-f="title" maxlength="80" value="' + esc(d.title) + '" placeholder="e.g. Thai dinner"></div><div class="field"><label for="f-date">Date</label><input type="date" id="f-date" data-f="date" value="' + esc(d.date) + '"></div>' + catSelect('f-cat', 'data-f', d) + '<div class="field"><label for="f-payer">Your name (you paid)</label><input type="text" id="f-payer" data-f="payerName" maxlength="40"' + (ed ? ' disabled' : '') + ' value="' + esc(d.payerName) + '" placeholder="e.g. Katherine"></div></div>';
   h += currencyHtml(d, 'f');
   h += '<div class="items"><div class="irow h"><span>Item</span><span>Qty</span><span>Each (' + CUR + ')</span><span style="text-align:right">Total</span><span></span></div>';
   d.items.forEach(function (it, i) { h += '<div class="irow"><input type="text" aria-label="Item name" data-i="' + i + '" data-k="name" value="' + esc(it.name) + '" placeholder="Item"><input type="number" min="1" aria-label="Quantity" data-i="' + i + '" data-k="qty" value="' + esc(it.qty) + '"><input type="number" step="0.01" min="0" inputmode="decimal" aria-label="Price of one" data-i="' + i + '" data-k="price" value="' + esc(it.price) + '" placeholder="0.00"><span class="mono small" data-line="' + i + '">' + fmt(lineCents(it)) + '</span><button class="x" data-act="rmitem" data-i="' + i + '" aria-label="Remove item">×</button></div>'; });
@@ -477,6 +558,8 @@ function render() {
   CUR = Currency.clean(S.view === 'new' && S.draft ? S.draft.currency : S.view === 'bill' && S.bill ? S.bill.currency : S.view === 'expense' && S.edraft ? S.edraft.currency : pe ? pe.currency : 'MYR');
   a.innerHTML = S.view === 'new' ? viewNew() : S.view === 'bill' ? viewBill() : S.view === 'trip' ? viewTrip() : S.view === 'tripnew' ? viewTripNew() : S.view === 'expense' ? viewExpense() : S.view === 'picks' ? viewPicks() : viewHome();
   if (q && (q = $('#q'))) { q.focus(); try { q.setSelectionRange(at, at); } catch (e) {} }
+  // The chosen date button stays in view in its swipeable row.
+  var on = S.view === 'home' && document.querySelector('.datechips .btn.primary'); if (on) on.parentNode.scrollLeft = on.offsetLeft - on.parentNode.offsetLeft - 16;
   if (S.view === 'new') saveDraft();
   if (S.view === 'bill' && S.bill) checkSlips(S.bill);
 }
@@ -529,7 +612,7 @@ async function refreshTrip() {
 }
 
 function viewTripNew() {
-  return topbar() + '<button class="btn ghost" data-nav="/">← Your bills</button><h2>New trip</h2>' +
+  return topbar() + '<button class="btn ghost" data-nav="/trips">← Your trips</button><h2>New trip</h2>' +
     '<div class="card"><p class="muted">For a trip or an event where different people pay along the way. Everyone adds what they paid, chooses who shares it, and the app works out who pays whom at the end.</p>' +
     '<div class="two"><div class="field"><label for="tn-title">Trip or event name</label><input type="text" id="tn-title" maxlength="80" placeholder="e.g. Penang weekend"></div>' +
     '<div class="field"><label for="tn-name">Your name</label><input type="text" id="tn-name" maxlength="40" placeholder="e.g. Katherine" value="' + esc(S.store.name || '') + '"></div></div>' +
@@ -553,11 +636,11 @@ function splitText(t, e) {
   return (e.mode === 'exact' ? 'Split by amount: ' : 'Split equally: ') + names.join(', ');
 }
 function viewTrip() {
-  if (S.err) return topbar() + '<div class="card empty"><h3>' + esc(S.err) + '</h3><button class="btn primary" data-nav="/">Back to your bills</button></div>';
+  if (S.err) return topbar() + '<div class="card empty"><h3>' + esc(S.err) + '</h3><button class="btn primary" data-nav="/trips">Back to your trips</button></div>';
   var t = S.trip;
   if (!t) return topbar() + '<div class="card empty"><h3>Opening trip…</h3></div>';
   var meId = tmyId(t), me = meId ? tmem(t, meId) : null, bal = Settle.balances(t), total = Settle.total(t);
-  var h = topbar() + '<button class="btn ghost" data-nav="/">← Your bills</button>';
+  var h = topbar() + '<button class="btn ghost" data-nav="/trips">← Your trips</button>';
   h += '<div class="row between" style="align-items:flex-start"><div class="grow"><h2>' + esc(t.title) + '</h2><div class="small muted">Trip · ' + t.members.length + (t.members.length === 1 ? ' person · ' : ' people · ') + t.expenses.length + ' expense' + (t.expenses.length === 1 ? '' : 's') + '</div></div><div class="mono" style="font-size:20px">' + fmt(total) + '</div></div>';
 
   if (!me) {
@@ -577,6 +660,7 @@ function viewTrip() {
   h += '<div class="tiles"><div class="tile' + (my.net > 0 ? ' owed' : my.net < 0 ? ' owe' : '') + '"><div class="k">' + (my.net > 0 ? 'You get back' : my.net < 0 ? 'You owe' : 'You are') + '</div><div class="v">' + (my.net ? fmt(Math.abs(my.net)) : 'Settled') + '</div></div><div class="tile"><div class="k">You paid · your share</div><div class="v" style="font-size:16px">Paid ' + fmt(my.paid) + '<br>Share ' + fmt(my.owes) + '</div></div></div>';
   if (!me.hasQr) h += '<div class="alert"><span>Add your DuitNow QR so others can pay you when settling up.</span><button class="btn small primary" data-act="tqr">Add my DuitNow QR</button></div>';
   h += tripBudgetHtml(t, me, bal);
+  if (t.expenses.length) h += '<div class="card sharecard"><div><b>Show off this trip</b><p class="small muted" style="margin:4px 0 0">Make a picture of the trip for Instagram or WhatsApp.</p></div><div><button class="btn small primary" data-act="tcard">Make trip card</button></div></div>';
   h += notifyHtml(t, 'someone pays you');
   h += tripSettleHtml(t, meId);
   h += tripExpensesHtml(t, me);
@@ -584,6 +668,246 @@ function viewTrip() {
   h += '<div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="tcopyprivate">Copy my private link (keep private)</button>' + (me.hasQr ? '<button class="btn small" data-act="tqr">Change my DuitNow QR</button>' : '') + (me.isOwner ? '<button class="btn small" data-act="tdelete" style="color:var(--bad)">Delete trip</button>' : '') + '</div>';
   return h;
 }
+/* ---------- trip summary card ----------
+ * A picture of the trip to post on Instagram or WhatsApp: name, total, people, and whether everyone is settled.
+ * Drawn on this phone (1080 x 1350); nothing is uploaded. Shown first, then shared or saved by the person. */
+var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function shortDate(iso) { var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || ''); return m ? +m[3] + ' ' + MON[+m[2] - 1] + ' ' + m[1] : ''; }
+function tripDates(t) {
+  var b = t.budget, ds = t.expenses.map(function (e) { return e.date; }).filter(Boolean).sort();
+  var a = b && b.start ? b.start : ds[0], z = b && b.end ? b.end : ds[ds.length - 1];
+  if (!a) return shortDate(new Date(t.createdAt + 8 * 3600e3).toISOString());
+  if (a === z) return shortDate(a);
+  var A = shortDate(a).split(' '), Z = shortDate(z).split(' ');
+  return A[2] === Z[2] ? (A[1] === Z[1] ? A[0] + '–' + Z[0] + ' ' + Z[1] : A[0] + ' ' + A[1] + ' – ' + Z[0] + ' ' + Z[1]) + ' ' + Z[2] : shortDate(a) + ' – ' + shortDate(z);
+}
+function roundRect(x, X, Y, W, H, r) { x.beginPath(); x.moveTo(X + r, Y); x.arcTo(X + W, Y, X + W, Y + H, r); x.arcTo(X + W, Y + H, X, Y + H, r); x.arcTo(X, Y + H, X, Y, r); x.arcTo(X, Y, X + W, Y, r); x.closePath(); }
+// Breaks text into at most `max` lines that fit `w`; the last one ends with … if it had to be cut.
+function fitLines(x, text, w, max) {
+  var words = String(text).split(/\s+/), lines = [], cur = '';
+  words.forEach(function (wd) { var t = cur ? cur + ' ' + wd : wd; if (x.measureText(t).width <= w || !cur) cur = t; else { lines.push(cur); cur = wd; } });
+  if (cur) lines.push(cur);
+  if (lines.length > max) { lines = lines.slice(0, max); var l = lines[max - 1]; while (l.length > 1 && x.measureText(l + '…').width > w) l = l.slice(0, -1); lines[max - 1] = l + '…'; }
+  return lines.map(function (l) { while (l.length > 1 && x.measureText(l).width > w) l = l.slice(0, -2) + '…'; return l; });
+}
+// Each category keeps its own colour (the validated default categorical palette); the card shows the top three and
+// folds the rest into grey "Others", always labelled, so colour is never the only clue.
+var CAT_COLOR = { food: '#eb6834', transport: '#2a78d6', stay: '#6250d6', shopping: '#e87ba4', groceries: '#008300', fun: '#eda100', bills: '#1baf7a', other: '#9aa3ad' };
+var CAT_SHORT = { food: 'Food', transport: 'Transport', stay: 'Hotel', shopping: 'Shopping', groceries: 'Groceries', fun: 'Fun', bills: 'Bills', other: 'Other' };
+function tripSpend(t) {
+  var by = {}, total = 0;
+  t.expenses.forEach(function (e) { var k = Wrapped.categoryKey(e), a = Settle.amountRM(e); by[k] = (by[k] || 0) + a; total += a; });
+  var list = Object.keys(by).map(function (k) { return { key: k, rm: by[k] }; }).sort(function (a, z) { return z.rm - a.rm; });
+  if (list.length > 4) { var rest = list.slice(3).reduce(function (s, x) { return s + x.rm; }, 0); list = list.slice(0, 3).concat([{ key: 'others', rm: rest }]); }
+  return { total: total, list: list.map(function (x) { return Object.assign(x, { pct: total ? x.rm / total : 0 }); }) };
+}
+async function tripCard(t) {
+  try { await Promise.all(['900 64px Nunito', '800 32px Nunito', '700 28px Nunito'].map(function (f) { return document.fonts.load(f); })); } catch (e) {}
+  var spend = tripSpend(t), CAT = spend.total > 0 ? (spend.list.length > 2 ? 175 : 125) : 0;
+  var W = 1080, H = 1350 + CAT, c = document.createElement('canvas'); c.width = W; c.height = H;
+  var x = c.getContext('2d'), F = function (wt, px) { return wt + ' ' + px + 'px Nunito, system-ui, sans-serif'; };
+  var bal = Settle.balances(t), total = Settle.total(t), n = t.members.length, settled = t.expenses.length && !Settle.transfers(bal).length;
+  // Sky to sunset, with a few soft suns.
+  var g = x.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#2f80ed'); g.addColorStop(0.62, '#56b4f5'); g.addColorStop(1, '#ffb27a');
+  x.fillStyle = g; x.fillRect(0, 0, W, H);
+  [[930, 150, 120, 'rgba(255,201,60,.9)'], [120, 1240, 170, 'rgba(255,122,69,.35)'], [990, 1180, 90, 'rgba(255,255,255,.18)']].forEach(function (s) { x.fillStyle = s[3]; x.beginPath(); x.arc(s[0], s[1], s[2], 0, 7); x.fill(); });
+  // Dotted flight path.
+  x.strokeStyle = 'rgba(255,255,255,.55)'; x.lineWidth = 5; x.setLineDash([2, 18]); x.lineCap = 'round';
+  x.beginPath(); x.moveTo(70, 250); x.bezierCurveTo(320, 150, 640, 290, 860, 190); x.stroke(); x.setLineDash([]);
+  x.font = F(900, 54); x.fillStyle = '#fff'; x.textBaseline = 'alphabetic'; x.fillText('✈', 868, 214);
+  // Brand.
+  x.font = F(900, 64); x.fillStyle = '#fff'; x.fillText('Bei ', 80, 130); var bw = x.measureText('Bei ').width;
+  x.fillStyle = '#ffc93c'; x.fillText('Cin', 80 + bw, 130); var cw = x.measureText('Cin ').width;
+  x.fillStyle = '#fff'; x.fillText('Lah', 80 + bw + cw, 130);
+  x.font = F(800, 28); x.fillStyle = 'rgba(255,255,255,.85)'; x.fillText('MAKAN-MAKAN, JALAN-JALAN', 82, 178);
+  // The pass.
+  var PX = 70, PY = 280, PW = W - 140, PH = 1010 + CAT;
+  x.save(); x.shadowColor = 'rgba(20,33,61,.28)'; x.shadowBlur = 40; x.shadowOffsetY = 18; roundRect(x, PX, PY, PW, PH, 44); x.fillStyle = '#fff'; x.fill(); x.restore();
+  roundRect(x, PX, PY, PW, 92, 44); x.save(); x.clip(); x.fillStyle = '#ff7a45'; x.fillRect(PX, PY, PW, 92); x.restore();
+  x.fillStyle = '#ff7a45'; x.fillRect(PX, PY + 50, PW, 42);
+  x.font = F(900, 30); x.fillStyle = '#fff'; x.fillText('TRIP PASS', PX + 50, PY + 58);
+  x.textAlign = 'right'; x.fillText('SEDAP ✓', PX + PW - 50, PY + 58); x.textAlign = 'left';
+  var L = PX + 56, IW = PW - 112, y = PY + 170;
+  x.fillStyle = '#14213d'; x.font = F(900, 66);
+  var tl = fitLines(x, t.title, IW, 2); tl.forEach(function (l) { x.fillText(l, L, y); y += 76; });
+  x.font = F(700, 32); x.fillStyle = '#5d6b82'; x.fillText(tripDates(t), L, y - 18); y += 52;
+  // Total.
+  x.font = F(800, 28); x.fillStyle = '#5d6b82'; x.fillText('SPENT TOGETHER', L, y); y += 92;
+  x.font = F(900, 104); x.fillStyle = '#14213d'; x.fillText(fmt(total), L, y); y += 64;
+  // Three small stats.
+  var stats = [[n + (n === 1 ? ' friend' : ' friends'), 'on the trip'], [t.expenses.length + (t.expenses.length === 1 ? ' expense' : ' expenses'), 'added'], [n ? fmt(Math.round(total / n)) : fmt(0), 'each, on average']];
+  var sw = IW / 3;
+  stats.forEach(function (s, i) { var sx = L + i * sw; x.font = F(900, 38); x.fillStyle = '#2f80ed'; x.fillText(fitLines(x, s[0], sw - 20, 1)[0], sx, y); x.font = F(700, 26); x.fillStyle = '#5d6b82'; x.fillText(s[1], sx, y + 38); });
+  y += 100;
+  // Where it went: one bar split by category, then up to four labelled lines.
+  if (CAT) {
+    x.font = F(800, 26); x.fillStyle = '#5d6b82'; x.fillText('WHERE IT WENT', L, y - 6);
+    var bx = L, by = y + 14;
+    x.save(); roundRect(x, L, by, IW, 26, 13); x.clip();
+    spend.list.forEach(function (s, i) { var w = i === spend.list.length - 1 ? L + IW - bx : Math.round(s.pct * IW); x.fillStyle = CAT_COLOR[s.key] || '#9aa3ad'; x.fillRect(bx, by, w, 26); bx += w; if (i < spend.list.length - 1) { x.fillStyle = '#fff'; x.fillRect(bx - 2, by, 4, 26); } });
+    x.restore();
+    spend.list.forEach(function (s, i) {
+      var cx = L + (i % 2) * (IW / 2), cy = by + 78 + Math.floor(i / 2) * 50, cat = Wrapped.byKey[s.key];
+      x.fillStyle = CAT_COLOR[s.key] || '#9aa3ad'; x.beginPath(); x.arc(cx + 11, cy - 9, 11, 0, 7); x.fill();
+      x.font = F(900, 28); x.fillStyle = '#14213d'; var lab = (cat ? cat.icon + ' ' + CAT_SHORT[s.key] : '➕ Others'); x.fillText(lab, cx + 32, cy);
+      var lw = x.measureText(lab + '  ').width; x.font = F(700, 24); x.fillStyle = '#5d6b82';
+      x.fillText(fitLines(x, fmt(s.rm).replace('.00', '') + ' · ' + Math.round(s.pct * 100) + '%', IW / 2 - 40 - lw, 1)[0], cx + 32 + lw, cy);
+    });
+    y += CAT;
+  }
+  // Friends.
+  var show = t.members.slice(0, 6), ax = L;
+  show.forEach(function (m) {
+    x.fillStyle = 'hsl(' + hue(m.id) + ' 55% 45%)'; x.beginPath(); x.arc(ax + 40, y + 40, 40, 0, 7); x.fill();
+    x.strokeStyle = '#fff'; x.lineWidth = 6; x.stroke();
+    x.font = F(900, 36); x.fillStyle = '#fff'; x.textAlign = 'center'; x.fillText((m.name.trim().charAt(0) || '?').toUpperCase(), ax + 40, y + 53);
+    x.font = F(700, 22); x.fillStyle = '#14213d'; x.fillText(fitLines(x, m.name, 112, 1)[0], ax + 40, y + 114); x.textAlign = 'left';
+    ax += 126;
+  });
+  if (n > show.length) { x.font = F(900, 32); x.fillStyle = '#5d6b82'; x.fillText('+' + (n - show.length), ax + 6, y + 52); }
+  // Budget, if there is one.
+  var b = t.budget;
+  if (b) {
+    var used = b.per === 'person' ? (n ? total / n : 0) / b.amount : total / b.amount, by = y + 160;
+    x.font = F(800, 26); x.fillStyle = '#5d6b82'; x.fillText('Budget ' + fmt(b.amount) + (b.per === 'person' ? ' each' : '') + ' · ' + Math.round(used * 100) + '% used', L, by);
+    roundRect(x, L, by + 18, IW, 18, 9); x.fillStyle = '#e8eef7'; x.fill();
+    roundRect(x, L, by + 18, Math.max(18, Math.min(1, used) * IW), 18, 9); x.fillStyle = used > 1 ? '#d6334a' : used >= 0.8 ? '#ff7a45' : '#16a37a'; x.fill();
+  }
+  // Tear line and footer.
+  var fy = PY + PH - 120;
+  x.fillStyle = '#56b4f5'; [PX, PX + PW].forEach(function (cx) { x.beginPath(); x.arc(cx, fy, 26, 0, 7); x.fill(); });
+  x.strokeStyle = '#d5dde8'; x.lineWidth = 4; x.setLineDash([14, 14]); x.beginPath(); x.moveTo(PX + 40, fy); x.lineTo(PX + PW - 40, fy); x.stroke(); x.setLineDash([]);
+  x.font = F(800, 28); x.fillStyle = '#5d6b82'; x.fillText('Split with Bei Cin Lah', L, fy + 66);
+  x.font = F(900, 28); x.fillStyle = '#2f80ed'; x.fillText(location.host, L, fy + 102);
+  // Stamp, in the footer beside the link.
+  x.save(); x.translate(PX + PW - 175, fy + 66); x.rotate(-0.12);
+  var sc = settled ? '#16a37a' : '#ff7a45'; x.fillStyle = '#fff'; roundRect(x, -135, -46, 270, 92, 20); x.fill(); x.strokeStyle = sc; x.lineWidth = 6; x.stroke();
+  x.fillStyle = sc; x.textAlign = 'center'; x.font = F(900, settled ? 34 : 31); x.fillText(settled ? 'ALL SETTLED' : 'SETTLING UP', 0, 0);
+  x.font = F(800, 20); x.fillText(settled ? 'no hutang 🎉' : 'almost there 💸', 0, 30); x.restore();
+  return new Promise(function (ok) { c.toBlob(function (bl) { ok(bl); }, 'image/png'); });
+}
+/* ---------- Wrapped ----------
+ * A month of this person's spending with friends (bills and trip expenses: food, transport, hotels, shopping...) as one
+ * story-sized picture (1080 x 1920), like Spotify Wrapped. Worked out from the bills and trips on this phone
+ * (public/wrapped.js) and drawn here; nothing is uploaded. */
+var MONTHS_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+var CUISINE_ICON = { Mamak: '🍛', Malay: '🍚', Chinese: '🥢', Japanese: '🍣', Korean: '🥘', Thai: '🌶️', Indian: '🍛', Western: '🍔', 'Café': '☕', 'Fast food': '🍟', Other: '🍽️' };
+function ymName(ym) { return MONTHS_FULL[+ym.slice(5, 7) - 1] + ' ' + ym.slice(0, 4); }
+function thisMonth() { return new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 7); }
+function wrapMonths() { return Wrapped.months(S.home, myId, S.homeTrips, tmyId); }
+// In the first week of a month, last month's Wrapped; otherwise the newest month so far.
+function wrapDefault() {
+  var ms = wrapMonths(), now = thisMonth(), d = +new Date(Date.now() + 8 * 3600e3).toISOString().slice(8, 10);
+  var prev = new Date(Date.UTC(+now.slice(0, 4), +now.slice(5, 7) - 2, 1)).toISOString().slice(0, 7);
+  if (d <= 7 && ms.indexOf(prev) > -1) return prev;
+  return ms.filter(function (m) { return m <= now; })[0] || ms[0];
+}
+function wrappedHomeHtml() {
+  if (!S.home.length && !S.homeTrips.length) return '';
+  var ym = wrapDefault(); if (!ym) return '';
+  var soFar = ym === thisMonth();
+  var share = canShareFiles();
+  return '<div class="wrapbar"><button class="wb-main" data-act="' + (share ? 'wrapshare' : 'wrapped') + '" data-ym="' + ym + '"><span class="wb-icon" aria-hidden="true">🎉</span><span class="wb-text"><b>' + MONTHS_FULL[+ym.slice(5, 7) - 1] + ' Wrapped' + (soFar ? ' so far' : '') + '</b><span>' + (share ? 'Tap to share 📸' : 'Your month in one picture') + '</span></span></button>' +
+    '<button class="wb-prev" data-act="wrapped" data-ym="' + ym + '">' + (share ? 'Preview' : 'Open') + '</button></div>';
+}
+async function wrappedCard(s) {
+  try { await Promise.all(['900 120px Nunito', '800 40px Nunito', '700 30px Nunito'].map(function (f) { return document.fonts.load(f); })); } catch (e) {}
+  var W = 1080, H = 1920, c = document.createElement('canvas'); c.width = W; c.height = H;
+  var x = c.getContext('2d'), F = function (wt, px) { return wt + ' ' + px + 'px Nunito, system-ui, sans-serif'; }, L = 80, IW = W - 160;
+  var g = x.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#ff7a45'); g.addColorStop(0.45, '#ff4f7b'); g.addColorStop(1, '#5b3df5');
+  x.fillStyle = g; x.fillRect(0, 0, W, H);
+  // Big soft shapes, Wrapped style.
+  [[980, 260, 260, '#ffc93c', 0.9], [60, 1060, 220, '#2f80ed', 0.45], [1000, 1500, 320, '#16a37a', 0.35], [180, 1840, 160, '#ffc93c', 0.5]].forEach(function (b) { x.globalAlpha = b[4]; x.fillStyle = b[3]; x.beginPath(); x.arc(b[0], b[1], b[2], 0, 7); x.fill(); });
+  x.globalAlpha = 1; x.textBaseline = 'alphabetic';
+  x.font = F(900, 46); x.fillStyle = '#fff'; x.fillText('Bei ', L, 140); var bw = x.measureText('Bei ').width; x.fillStyle = '#ffc93c'; x.fillText('Cin', L + bw, 140); var cw = x.measureText('Cin ').width; x.fillStyle = '#fff'; x.fillText('Lah', L + bw + cw, 140);
+  x.font = F(900, 30); var pw = x.measureText('WRAPPED').width + 60;
+  roundRect(x, L, 178, pw, 62, 31); x.fillStyle = '#14213d'; x.fill(); x.fillStyle = '#ffc93c'; x.fillText('WRAPPED', L + 30, 220);
+  x.font = F(900, 56); x.fillStyle = '#fff'; x.fillText(ymName(s.month) + (s.month === thisMonth() ? ' (so far)' : ''), L, 320);
+  // The headline.
+  var y = 470;
+  x.font = F(800, 44); x.fillStyle = 'rgba(255,255,255,.9)';
+  if (s.fronted) {
+    x.fillText('You fronted', L, y); y += 150;
+    x.font = F(900, 150); x.fillStyle = '#fff'; x.fillText(fitLines(x, fmt(s.fronted), IW, 1)[0], L, y); y += 70;
+    x.font = F(800, 44); x.fillStyle = 'rgba(255,255,255,.9)'; x.fillText('paying for the group this month', L, y); y += 56;
+    x.font = F(700, 32); x.fillStyle = 'rgba(255,255,255,.8)'; x.fillText(fitLines(x, fmt(s.frontedFor) + ' of it was friends\' share · you paid ' + s.paidCount + (s.paidCount === 1 ? ' time' : ' times'), IW, 1)[0], L, y);
+  } else {
+    x.fillText('You spent', L, y); y += 150;
+    x.font = F(900, 150); x.fillStyle = '#fff'; x.fillText(fitLines(x, fmt(s.spent), IW, 1)[0], L, y); y += 70;
+    x.font = F(800, 44); x.fillStyle = 'rgba(255,255,255,.9)'; x.fillText('with friends this month', L, y);
+  }
+  // Four tiles.
+  var tiles = [];
+  if (s.fastest) tiles.push(['FASTEST TO PAY YOU BACK', '⚡ ' + s.fastest.name, 'avg. ' + Wrapped.took(s.fastest.avg), '#14213d', '#ffc93c']);
+  // Where the money went; for food, which cuisine too ("Food & drinks · mostly Mamak").
+  if (s.category) tiles.push(['WHERE YOUR MONEY WENT', s.category.icon + ' ' + (s.category.name === 'Other' ? 'A bit of everything' : s.category.name),
+    s.category.pct + '% of your spending' + (s.category.name === 'Food & drinks' && s.cuisine ? ' · mostly ' + s.cuisine.name + ' ' + (CUISINE_ICON[s.cuisine.name] || '') : ''), '#fff', '#ff4f7b']);
+  if (s.buddy) tiles.push(['SPENT MOST WITH', '🤝 ' + s.buddy.name, s.buddy.times + (s.buddy.times === 1 ? ' time' : ' times') + ' together', '#fff', '#5b3df5']);
+  if (s.dish) tiles.push(['FAVOURITE ORDER', '😋 ' + s.dish.name, 'ordered ' + s.dish.times + ' times', '#14213d', '#16a37a']);
+  else if (s.biggest) tiles.push(['BIGGEST SPEND', '🥳 ' + s.biggest.title, fmt(s.biggest.total) + (s.biggest.trip ? ' · ' + s.biggest.trip : ''), '#14213d', '#16a37a']);
+  var ty = 860, th = 196, gap = 26;
+  tiles.slice(0, 4).forEach(function (tl, i) {
+    var yy = ty + i * (th + gap);
+    roundRect(x, L, yy, IW, th, 34); x.fillStyle = tl[3]; x.fill();
+    x.font = F(900, 26); x.fillStyle = tl[4]; x.fillText(tl[0], L + 44, yy + 56);
+    x.font = F(900, 54); x.fillStyle = tl[3] === '#fff' ? '#14213d' : '#fff'; x.fillText(fitLines(x, tl[1], IW - 88, 1)[0], L + 44, yy + 124);
+    x.font = F(700, 30); x.fillStyle = tl[3] === '#fff' ? '#5d6b82' : 'rgba(255,255,255,.8)'; x.fillText(fitLines(x, tl[2], IW - 88, 1)[0], L + 44, yy + 168);
+  });
+  // Footer.
+  var fy = H - 150;
+  x.font = F(800, 34); x.fillStyle = '#fff'; x.fillText(fitLines(x, s.count + (s.count === 1 ? ' thing' : ' things') + ' split with friends' + (s.busiestDay ? ' · busiest on ' + s.busiestDay + 's' : ''), IW, 1)[0], L, fy);
+  x.font = F(900, 34); x.fillStyle = '#ffc93c'; x.fillText('Make yours at ' + location.host, L, fy + 56);
+  return new Promise(function (ok) { c.toBlob(function (bl) { ok(bl); }, 'image/png'); });
+}
+// Phones that can hand a picture to other apps (Instagram, WhatsApp...) through the share sheet.
+function canShareFiles() { try { return !!(navigator.canShare && navigator.canShare({ files: [new File([new Blob(['x'], { type: 'image/png' })], 'x.png', { type: 'image/png' })] })); } catch (e) { return false; } }
+// The banner's picture is made in the background after the home page loads, so a tap can open the share sheet at
+// once (phones only allow sharing straight after a tap). `key` notices when bills or trips changed since.
+function wrapKey(ym) { return ym + '|' + S.home.map(function (b) { return b.id + (b.editedAt || '') + (b.category || ''); }).join() + '|' + S.homeTrips.map(function (t) { return t.id + t.expenses.length; }).join(); }
+var wrapPrep = null;
+function prepWrapped() {
+  var ym = (S.home.length || S.homeTrips.length) && wrapDefault(); if (!ym || !canShareFiles()) return;
+  var key = wrapKey(ym); if (wrapPrep && wrapPrep.key === key) return;
+  wrapPrep = { key: key, ym: ym, blob: null };
+  var mine = wrapPrep;
+  wrappedCard(Wrapped.month(S.home, ym, myId, S.homeTrips, tmyId)).then(function (b) { mine.blob = b; });
+}
+function shareWrapped(ym) {
+  var p = wrapPrep;
+  if (!p || p.ym !== ym || p.key !== wrapKey(ym) || !p.blob) return showWrapped(ym);
+  var file = new File([p.blob], 'bei-cin-lah-wrapped-' + ym + '.png', { type: 'image/png' });
+  navigator.share({ files: [file], text: 'My ' + ymName(ym) + ' Wrapped, from Bei Cin Lah: ' + location.origin }).catch(function () {});
+}
+async function showWrapped(ym) {
+  var ms = wrapMonths(); if (!ms.length) return toast('No bills yet to wrap up');
+  if (ms.indexOf(ym) < 0) ym = ms[0];
+  var s = Wrapped.month(S.home, ym, myId, S.homeTrips, tmyId);
+  toast('Wrapping up ' + ymName(ym) + '…');
+  var blob = await wrappedCard(s); if (!blob) return toast('Could not make the picture on this phone');
+  if (S.modal && S.modal.src && S.modal.src.indexOf('blob:') === 0) URL.revokeObjectURL(S.modal.src);
+  S.card = { blob: blob, name: 'bei-cin-lah-wrapped-' + ym + '.png', text: 'My ' + ymName(ym) + ' Wrapped, from Bei Cin Lah: ' + location.origin };
+  var i = ms.indexOf(ym), older = ms[i + 1], newer = ms[i - 1];
+  var canShare = !!(navigator.canShare && navigator.canShare({ files: [new File([blob], S.card.name, { type: 'image/png' })] }));
+  S.modal = { title: ymName(ym) + ' Wrapped', src: URL.createObjectURL(blob),
+    html: '<p class="small muted" style="margin:0">Made from the bills and trips on this phone. Shows two friends\' names (fastest to pay back, and who you spent most with); nothing about who owes what.</p>',
+    acts: (canShare ? '<button class="btn primary" data-act="cardshare">Share</button>' : '') + '<button class="btn' + (canShare ? '' : ' primary') + '" data-act="cardsave">Save picture</button>' +
+      (older ? '<button class="btn small" data-act="wrapped" data-ym="' + older + '">‹ ' + MONTHS_FULL[+older.slice(5, 7) - 1] + '</button>' : '') +
+      (newer ? '<button class="btn small" data-act="wrapped" data-ym="' + newer + '">' + MONTHS_FULL[+newer.slice(5, 7) - 1] + ' ›</button>' : '') };
+  paintModal();
+}
+async function showTripCard(t) {
+  toast('Making your trip card…');
+  var blob = await tripCard(t); if (!blob) return toast('Could not make the picture on this phone');
+  S.card = { text: 'Our trip, split with Bei Cin Lah: ' + location.origin, blob: blob, name: 'bei-cin-lah-' + t.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) + '.png' };
+  var canShare = !!(navigator.canShare && navigator.canShare({ files: [new File([blob], S.card.name, { type: 'image/png' })] }));
+  S.modal = { title: 'Trip card', src: URL.createObjectURL(blob),
+    html: '<p class="small muted" style="margin:0">Shows the trip name, total, and everyone\'s first names. Nothing about who owes whom.</p>',
+    acts: (canShare ? '<button class="btn primary" data-act="cardshare">Share</button>' : '') + '<button class="btn' + (canShare ? '' : ' primary') + '" data-act="cardsave">Save picture</button>' };
+  paintModal();
+}
+function shareCard() { navigator.share({ files: [new File([S.card.blob], S.card.name, { type: 'image/png' })], text: S.card.text }).catch(function () {}); }
+function saveCard() { var a = document.createElement('a'); a.href = URL.createObjectURL(S.card.blob); a.download = S.card.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000); }
+
 /* ---------- trip budget ----------
  * Set by the person who made the trip, in RM, for each person or the whole group. Spending is counted from the trip's
  * expenses in RM: your share for a budget per person, everyone's for a group budget. Dates are optional. */
@@ -655,7 +979,7 @@ function tripExpensesHtml(t, me) {
   if (!t.expenses.length) return h + '<p class="muted">Nothing added yet.' + (me ? ' Whoever pays for something adds it here: hotel, meals, petrol, tickets…' : '') + '</p></div>';
   t.expenses.slice().reverse().forEach(function (e) {
     var sh = Settle.shares(e), mine = me ? sh[me.id] || 0 : 0, canEdit = me && (me.isOwner || e.addedBy === me.id);
-    h += '<div class="person">' + tav(t, e.paidBy) + '<div class="grow"><div><b>' + esc(e.title) + '</b></div><div class="small muted">' + esc(e.date || '') + ' · paid by ' + esc(me && e.paidBy === me.id ? 'you' : tnm(t, e.paidBy)) + '</div><div class="small muted">' + esc(splitText(t, e)) + (mine ? ' · your share <span class="mono">' + fmt(mine, e.currency) + '</span>' : '') + '</div></div><span class="mono" style="text-align:right">' + fmt(e.amount, e.currency) + (fx(e) ? '<span class="small muted" style="display:block">≈ ' + rmText(e.amount, e) + '</span>' : '') + '</span>' +
+    h += '<div class="person">' + tav(t, e.paidBy) + '<div class="grow"><div><b>' + esc(e.title) + '</b></div><div style="margin:2px 0">' + catTag(e, canEdit ? 'data-act="expcat" data-eid="' + e.id + '"' : '') + '</div><div class="small muted">' + esc(e.date || '') + ' · paid by ' + esc(me && e.paidBy === me.id ? 'you' : tnm(t, e.paidBy)) + '</div><div class="small muted">' + esc(splitText(t, e)) + (mine ? ' · your share <span class="mono">' + fmt(mine, e.currency) + '</span>' : '') + '</div></div><span class="mono" style="text-align:right">' + fmt(e.amount, e.currency) + (fx(e) ? '<span class="small muted" style="display:block">≈ ' + rmText(e.amount, e) + '</span>' : '') + '</span>' +
       ((e.hasReceipt || canEdit || e.mode === 'items') ? '<div class="acts" style="width:100%;padding-left:38px">' + (e.mode === 'items' && me ? '<button class="btn small primary" data-nav="/t/' + t.id + '/x/' + e.id + '">' + (mine ? 'Change what you ate' : 'Choose what you ate') + '</button>' : '') + (e.hasReceipt ? '<button class="btn small" data-act="treceipt" data-eid="' + e.id + '">Receipt</button>' : '') + (canEdit ? '<button class="btn small" data-nav="/t/' + t.id + '/e/' + e.id + '">Edit</button>' : '') + '</div>' : '') + '</div>';
   });
   return h + '</div>';
@@ -667,7 +991,7 @@ function tripPeopleHtml(t, me, bal) {
     if (me.isOwner && !m.isOwner) acts = (m.claimed ? '<button class="btn small" data-act="treset" data-uid="' + m.id + '">Reset link</button>' : '') + '<button class="btn small" data-act="tremove" data-uid="' + m.id + '" style="color:var(--bad)">Remove</button>';
     h += '<div class="person">' + tav(t, m.id) + '<div class="grow"><div><b>' + esc(m.name) + (m.id === me.id ? ' (you)' : '') + '</b></div><div class="small muted">' + (n > 0 ? 'Gets back ' + fmt(n) : n < 0 ? 'Owes ' + fmt(-n) : 'Settled') + (m.claimed ? '' : ' · not joined yet') + (m.hasQr ? ' · has QR' : '') + '</div></div>' + (acts ? '<div class="acts" style="width:100%;padding-left:38px">' + acts + '</div>' : '') + '</div>';
   });
-  return h + '<div class="row"><input type="text" id="tgname" aria-label="Name" placeholder="Add someone by name" maxlength="40"><button class="btn" data-act="taddperson">Add</button></div><p class="small muted">Add people who have not joined yet, so you can include them in expenses. They can claim their name from the trip link.</p></div>';
+  return h + '<div class="row"><input type="text" id="tgname" aria-label="Name" placeholder="Add someone by name" maxlength="40" list="tgname-list" autocomplete="off"><button class="btn" data-act="taddperson">Add</button></div>' + nameHelp('tgname', t.members.map(function (m) { return m.name; })) + '<p class="small muted">Add people who have not joined yet, so you can include them in expenses. They can claim their name from the trip link.</p></div>';
 }
 
 // The add / edit expense form.
@@ -675,7 +999,7 @@ function newExpense(t) {
   var me = tmyId(t), among = {}, last = t.expenses[t.expenses.length - 1];
   t.members.forEach(function (m) { among[m.id] = true; });
   // A new expense starts in the same currency as the last one (a trip abroad usually stays in one currency).
-  return { tripId: t.id, eid: null, title: '', date: new Date().toISOString().slice(0, 10), paidBy: me, amount: '', mode: 'equal', among: among, shares: {},
+  return { tripId: t.id, eid: null, category: '', title: '', date: new Date().toISOString().slice(0, 10), paidBy: me, amount: '', mode: 'equal', among: among, shares: {},
     currency: last && fx(last) ? last.currency : 'MYR', rate: last && fx(last) ? String(last.rate) : '', rateNote: '',
     items: [{ name: '', qty: '1', price: '' }], service: '', sst: '', rounding: '', receipt: '', scanNote: '', scanning: false };
 }
@@ -684,7 +1008,7 @@ function expenseFrom(t, e) {
   e.among.forEach(function (id) { among[id] = true; if (e.mode === 'exact') shares[id] = fixed(e.shares[id] || 0); });
   if (e.mode === 'items') t.members.forEach(function (m) { among[m.id] = true; });
   var items = e.mode === 'items' ? e.items.map(function (i) { return { id: i.id, name: i.name, qty: String(i.qty), price: fixed(Math.round(i.price / i.qty)), line: i.price }; }) : [{ name: '', qty: '1', price: '' }];
-  return { tripId: t.id, eid: e.id, title: e.title, date: e.date, paidBy: e.paidBy, amount: fixed(e.amount), mode: e.mode, among: among, shares: shares, currency: e.currency || 'MYR', rate: fx(e) ? String(e.rate) : '', rateNote: '',
+  return { tripId: t.id, eid: e.id, title: e.title, category: e.category || '', date: e.date, paidBy: e.paidBy, amount: fixed(e.amount), mode: e.mode, among: among, shares: shares, currency: e.currency || 'MYR', rate: fx(e) ? String(e.rate) : '', rateNote: '',
     items: items, service: e.service ? fixed(e.service) : '', sst: e.sst ? fixed(e.sst) : '', rounding: e.rounding ? fixed(e.rounding) : '', receipt: '', hadReceipt: e.hasReceipt, scanNote: '', scanning: false };
 }
 // Split by items: the dishes plus charges are the total.
@@ -709,7 +1033,7 @@ function viewExpense() {
   if (!t || !d) return topbar() + '<div class="card empty"><h3>Opening trip…</h3></div>';
   var h = topbar() + '<button class="btn ghost" data-nav="/t/' + t.id + '">← ' + esc(t.title) + '</button><h2>' + (d.eid ? 'Edit expense' : 'Add expense') + '</h2>';
   h += '<div class="card"><h3>Receipt (optional)</h3><div class="drop"><div class="row">' + (d.receipt ? '<img class="thumb" src="' + d.receipt + '" alt="Receipt photo">' : '') + '<div><b>' + (d.receipt ? 'Receipt attached' : d.hadReceipt ? 'Receipt already attached' : 'Add a photo of the receipt') + '</b><div class="small muted">The dishes, total, shop name and date are read for you. Everyone in the trip can view the photo.</div></div></div><button class="btn" data-act="epick"' + (d.scanning ? ' disabled' : '') + '>' + (d.scanning ? 'Reading…' : d.receipt ? 'Change photo' : 'Choose photo') + '</button></div>' + (d.scanNote ? '<p class="small" style="color:var(--warn)">' + esc(d.scanNote) + '</p>' : '') + '</div>';
-  h += '<div class="card"><h3>What and who paid</h3><div class="two"><div class="field"><label for="e-title">What was it</label><input type="text" id="e-title" data-ef="title" maxlength="80" value="' + esc(d.title) + '" placeholder="e.g. Hotel, dinner, petrol"></div><div class="field"><label for="e-date">Date</label><input type="date" id="e-date" data-ef="date" value="' + esc(d.date) + '"></div>' +
+  h += '<div class="card"><h3>What and who paid</h3><div class="two"><div class="field"><label for="e-title">What was it</label><input type="text" id="e-title" data-ef="title" maxlength="80" value="' + esc(d.title) + '" placeholder="e.g. Hotel, dinner, petrol"></div><div class="field"><label for="e-date">Date</label><input type="date" id="e-date" data-ef="date" value="' + esc(d.date) + '"></div>' + catSelect('e-cat', 'data-ef', d) +
     '<div class="field"><label for="e-amount">Total (' + CUR + ')</label><input type="number" step="0.01" min="0" inputmode="decimal" id="e-amount" data-ef="amount" value="' + esc(d.mode === 'items' ? fixed(edTotal(d)) : d.amount) + '" placeholder="0.00"' + (d.mode === 'items' ? ' readonly title="Worked out from the items below"' : '') + '></div>' +
     '<div class="field"><label for="e-paid">Paid by</label><select id="e-paid" data-ef="paidBy">' + t.members.map(function (m) { return '<option value="' + m.id + '"' + (m.id === d.paidBy ? ' selected' : '') + '>' + esc(m.name) + (m.id === tmyId(t) ? ' (you)' : '') + '</option>'; }).join('') + '</select></div></div>' + currencyHtml(d, 'e') + '</div>';
   var modeBtn = function (m, label) { return '<button class="btn small' + (d.mode === m ? ' primary' : '') + '" data-act="emode" data-mode="' + m + '">' + label + '</button>'; };
@@ -756,12 +1080,12 @@ async function saveExpense() {
   if (d.mode === 'items') {
     var items = d.items.filter(function (i) { return lineCents(i) > 0; }).map(function (i) { return { id: i.id, name: i.name, qty: Math.max(1, parseInt(i.qty, 10) || 1), price: lineCents(i) }; });
     if (!items.length) return toast('Add at least one item with a price');
-    body = { title: d.title, date: d.date, paidBy: d.paidBy, currency: money.currency, rate: money.rate, mode: 'items', items: items, service: toC(d.service), sst: toC(d.sst), rounding: toC(d.rounding), receipt: d.receipt ? b64(d.receipt) : undefined };
+    body = { title: d.title, date: d.date, category: catToSave(d, items), paidBy: d.paidBy, currency: money.currency, rate: money.rate, mode: 'items', items: items, service: toC(d.service), sst: toC(d.sst), rounding: toC(d.rounding), receipt: d.receipt ? b64(d.receipt) : undefined };
   } else {
     if (toC(d.amount) <= 0) return toast('Enter the total');
     if (!among.length) return toast('Choose who shares it');
     if (d.mode === 'exact') { if (edRemain(d) !== 0) return toast('The amounts must add up to the total'); among.forEach(function (id) { shares[id] = toC(d.shares[id]); }); }
-    body = { title: d.title, date: d.date, paidBy: d.paidBy, currency: money.currency, rate: money.rate, amount: toC(d.amount), mode: d.mode, among: among, shares: shares, receipt: d.receipt ? b64(d.receipt) : undefined };
+    body = { title: d.title, date: d.date, category: catToSave(d), paidBy: d.paidBy, currency: money.currency, rate: money.rate, amount: toC(d.amount), mode: d.mode, among: among, shares: shares, receipt: d.receipt ? b64(d.receipt) : undefined };
   }
   try {
     var j = await api(d.eid ? 'PUT' : 'POST', '/api/trips/' + d.tripId + '/expenses' + (d.eid ? '/' + d.eid : ''), body, ttok(d.tripId));
@@ -804,6 +1128,7 @@ function tripAction(act, el) {
   var t = S.trip, d = S.edraft, uid = el.getAttribute('data-uid'), pid = el.getAttribute('data-pid'), done = function (msg) { return function (j) { setTrip(j); render(); if (msg) toast(msg); }; }, fail = function (x) { toast(x.message || 'That did not save'); };
   switch (act) {
     case 'tcreate': createTrip(); return true;
+    case 'tcard': showTripCard(t); return true;
     case 'tbudget': { var bg = t.budget; S.bdraft = bg ? { amount: fixed(bg.amount), per: bg.per, start: bg.start, end: bg.end } : { amount: '', per: 'person', start: '', end: '' }; render(); var ba = $('#b-amt'); if (ba) ba.focus(); return true; }
     case 'tbudgetper': S.bdraft.per = el.getAttribute('data-per'); render(); return true;
     case 'tbudgetcancel': S.bdraft = null; render(); return true;
@@ -874,6 +1199,7 @@ function expenseInput(t) {
   else if (t.hasAttribute('data-among')) { d.among[t.getAttribute('data-among')] = t.checked; render(); return true; }
   else return false;
   var el = $('#eRemain'); if (el) el.innerHTML = remainHtml(d);
+  if (t.getAttribute('data-ef') === 'title' || t.getAttribute('data-ek') === 'name') refreshAuto('e-cat', d);
   if (d.mode === 'items') { var tt = $('#eTotal'), am = $('#e-amount'); if (tt) tt.innerHTML = eTotalHtml(d); if (am) am.value = fixed(edTotal(d)); }
   return true;
 }
@@ -1179,13 +1505,13 @@ async function createBill() {
   S.creating = true; render();
   if (d.editId) {
     try {
-      var j = await api('PUT', '/api/bills/' + d.editId, { title: d.title, date: d.date, currency: money.currency, rate: money.rate, items: items, service: toC(d.service), sst: toC(d.sst), rounding: toC(d.rounding) }, tok(d.editId));
+      var j = await api('PUT', '/api/bills/' + d.editId, { title: d.title, date: d.date, category: catToSave(d, items), currency: money.currency, rate: money.rate, items: items, service: toC(d.service), sst: toC(d.sst), rounding: toC(d.rounding) }, tok(d.editId));
       var eid = d.editId; S.draft = null; S.creating = false; S.bill = j.bill; toast('Bill updated'); nav('/b/' + eid);
     } catch (e) { S.creating = false; toast(e.message); render(); }
     return;
   }
   try {
-    var r = await api('POST', '/api/bills', { title: d.title, date: d.date, payerName: d.payerName, currency: money.currency, rate: money.rate, items: items, service: toC(d.service), sst: toC(d.sst), rounding: toC(d.rounding), qr: b64(d.qr), receipt: b64(d.receipt) });
+    var r = await api('POST', '/api/bills', { title: d.title, date: d.date, category: catToSave(d, items), payerName: d.payerName, currency: money.currency, rate: money.rate, items: items, service: toC(d.service), sst: toC(d.sst), rounding: toC(d.rounding), qr: b64(d.qr), receipt: b64(d.receipt) });
     S.store.bills[r.id] = { token: r.token, memberId: r.memberId, title: d.title }; S.store.name = d.payerName.trim(); saveStore();
     S.draft = null; clearDraft(); S.creating = false; toast('Bill created. Send the link to your friends.'); nav('/b/' + r.id);
   } catch (e) { S.creating = false; toast(e.message); render(); }
@@ -1196,6 +1522,53 @@ function joinBill(body) {
     S.store.bills[S.billId] = { token: j.token, memberId: j.memberId, title: j.bill.title };
     var m = mem(j.bill, j.memberId); if (m) S.store.name = m.name; saveStore(); S.bill = j.bill; render(); window.scrollTo(0, 0);
   }).catch(function (e) { toast(e.message); refreshForce().then(render); });
+}
+/* ---------- friends' names ----------
+ * Names already used on this phone's bills and trips, most used first. Offered when adding someone, so a friend keeps
+ * one spelling ("Sarah", not "Sara" next time) and Wrapped counts them as one person. The list is worked out on
+ * the home page and kept on this phone (bcl.names), so it is there when a bill or trip is opened straight from a link. */
+function rememberNames() {
+  var count = {}, own = (S.store.name || '').trim().toLowerCase();
+  var add = function (m, me) { var k = m.name.trim().toLowerCase(); if (!k || m.id === me || k === own) return; (count[k] = count[k] || { name: m.name.trim(), n: 0 }).n++; };
+  S.home.forEach(function (b) { var me = myId(b); b.members.forEach(function (m) { add(m, me); }); });
+  S.homeTrips.forEach(function (t) { var me = tmyId(t); t.members.forEach(function (m) { add(m, me); }); });
+  var list = Object.keys(count).map(function (k) { return count[k]; }).sort(function (a, z) { return z.n - a.n || a.name.localeCompare(z.name); }).slice(0, 200).map(function (c) { return c.name; });
+  try { localStorage.setItem('bcl.names', JSON.stringify(list)); } catch (e) {}
+}
+function knownNames() { try { return JSON.parse(localStorage.getItem('bcl.names')) || []; } catch (e) { return []; } }
+// Typing suggestions, a few names to tap, and a hint line, for the name box with this id. `here` is who is already in.
+function nameHelp(id, here) {
+  var on = {}; here.forEach(function (n) { on[n.trim().toLowerCase()] = 1; });
+  var names = knownNames().filter(function (n) { return !on[n.toLowerCase()]; });
+  if (!names.length) return '<p class="small muted namehint" id="' + id + '-hint" aria-live="polite"></p>';
+  return '<datalist id="' + id + '-list">' + names.slice(0, 50).map(function (n) { return '<option value="' + esc(n) + '">'; }).join('') + '</datalist>' +
+    '<div class="chips namechips"><span class="small muted">Your friends:</span>' + names.slice(0, 6).map(function (n) { return '<button class="btn small" data-act="usename" data-for="' + id + '" data-name="' + esc(n) + '">+ ' + esc(n) + '</button>'; }).join('') + '</div>' +
+    '<p class="small namehint" id="' + id + '-hint" aria-live="polite"></p>';
+}
+// Edits needed to turn one word into the other (stops counting past 2).
+function nameDistance(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 3;
+  var prev = [], cur; for (var j = 0; j <= b.length; j++) prev[j] = j;
+  for (var i = 1; i <= a.length; i++) { cur = [i]; for (j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = cur; }
+  return prev[b.length];
+}
+// "Sara" when "Sarah" is known: one letter off (two for longer names), or the same first word ("Sarah L" and "Sarah Lim").
+function similarName(typed, here) {
+  var t = typed.trim().toLowerCase(); if (t.length < 3) return null;
+  var pool = here.concat(knownNames()), best = null;
+  pool.forEach(function (n) {
+    var k = n.trim().toLowerCase(); if (!k || k === t || best) return;
+    var d = nameDistance(t, k), firstSame = t.split(' ')[0] === k.split(' ')[0] && (t.indexOf(' ') > 0 || k.indexOf(' ') > 0);
+    if (d <= (t.length >= 7 ? 2 : 1) || firstSame) best = n.trim();
+  });
+  return best;
+}
+function nameHint(input) {
+  var hint = $('#' + input.id + '-hint'); if (!hint) return;
+  var here = input.id === 'gname' ? (S.bill ? S.bill.members.map(function (m) { return m.name; }) : []) : (S.trip ? S.trip.members.map(function (m) { return m.name; }) : []);
+  var v = input.value.trim(), exact = here.filter(function (n) { return n.trim().toLowerCase() === v.toLowerCase(); })[0], near = !exact && similarName(v, here);
+  hint.innerHTML = exact ? esc(exact) + ' is already on this ' + (input.id === 'gname' ? 'bill' : 'trip') + '.' :
+    near ? 'Did you mean <button class="btn small" data-act="usename" data-for="' + input.id + '" data-name="' + esc(near) + '">' + esc(near) + '</button>? Using the same name keeps your Wrapped right.' : '';
 }
 function addGuest() {
   var el = $('#gname'); if (!el) return; var name = el.value.trim();
@@ -1209,6 +1582,21 @@ document.addEventListener('click', function (e) {
   var t = e.target.closest('[data-act]'); if (!t) return;
   var act = t.getAttribute('data-act');
   if (act === 'closemodal') { if (t.classList.contains('modal') && e.target !== t) return; closeModal(); return; }
+  if (act === 'billcat' && S.bill) { pickCategory(catOf(S.bill).key, 'data-kind="bill"'); return; }
+  if (act === 'expcat' && S.trip) { var ex = S.trip.expenses.filter(function (x) { return x.id === t.getAttribute('data-eid'); })[0]; if (ex) pickCategory(catOf(ex).key, 'data-kind="exp" data-eid="' + ex.id + '"'); return; }
+  if (act === 'catpick') {
+    var cat = t.getAttribute('data-cat'), eid = t.getAttribute('data-eid'), was = t.getAttribute('data-kind');
+    closeModal();
+    var req = was === 'bill' ? api('PUT', '/api/bills/' + S.billId + '/category', { category: cat }, tok(S.billId)) : api('PUT', '/api/trips/' + S.tripId + '/expenses/' + eid + '/category', { category: cat }, ttok(S.tripId));
+    req.then(function (j) { if (j.bill) S.bill = j.bill; if (j.trip) S.trip = j.trip; render(); toast('Category: ' + catLabel(Wrapped.byKey[cat])); }).catch(function (x) { toast(x.message); });
+    return;
+  }
+  if (act === 'usename') {
+    var box = $('#' + t.getAttribute('data-for')); if (!box) return;
+    box.value = t.getAttribute('data-name');
+    if (box.id === 'gname') addGuest(); else tripAction('taddperson', box);
+    return;
+  }
   if (tripAction(act, t)) return;
   var b = S.bill, d = S.draft, uid = t.getAttribute('data-uid');
   switch (act) {
@@ -1264,7 +1652,14 @@ document.addEventListener('click', function (e) {
     case 'sst6': case 'sst8': d.sst = fixed(Math.round((draftSum(d) + toC(d.service)) * (act === 'sst6' ? 0.06 : 0.08))); render(); break;
     case 'create': createBill(); break;
     case 'linkdev': S.confirmRevoke = false; showLink(); break;
+    case 'wrapped': showWrapped(t.getAttribute('data-ym')); break;
+    case 'wrapshare': shareWrapped(t.getAttribute('data-ym')); break;
+    case 'cardshare': shareCard(); break;
+    case 'cardsave': saveCard(); break;
     case 'clearsearch': S.q = ''; render(); var qi = $('#q'); if (qi) qi.focus(); break;
+    case 'whentoggle': S.whenOpen = !S.whenOpen; render(); break;
+    case 'whenclear': S.when = 'all'; S.wFrom = ''; S.wTo = ''; render(); break;
+    case 'when': S.when = t.getAttribute('data-when'); if (S.when !== 'custom') { S.wFrom = ''; S.wTo = ''; } render(); if (S.when === 'custom' && !S.wFrom) { var wf = $('#wfrom'); if (wf) wf.focus(); } break;
     case 'unlinkdev': S.store.sync = ''; writeStore(); render(); toast('This device is unlinked. Your bills here stay, and stop syncing.'); break;
     case 'revokesync': revokeSync(); break;
     case 'linkconfirm': confirmLink(); break;
@@ -1275,6 +1670,7 @@ document.addEventListener('click', function (e) {
   }
 });
 document.addEventListener('input', function (e) {
+  if (e.target.id === 'gname' || e.target.id === 'tgname') { nameHint(e.target); return; }
   if (e.target.hasAttribute('data-bf') && S.bdraft) { S.bdraft[e.target.getAttribute('data-bf')] = e.target.value; return; }
   if (e.target.hasAttribute('data-search')) { S.q = e.target.value; render(); return; }
   if (S.view === 'expense') { expenseInput(e.target); return; }
@@ -1287,9 +1683,13 @@ document.addEventListener('input', function (e) {
     var ce = document.querySelector('[data-line="' + ix + '"]'); if (ce) ce.textContent = fmt(lineCents(it));
   } else return;
   var el = $('#draftTotals'); if (el) el.innerHTML = totalsHtml(d);
+  if (t.getAttribute('data-f') === 'title' || t.getAttribute('data-k') === 'name') refreshAuto('f-cat', d);
   saveDraft();
 });
+// Tapping the search box opens the date options too (a tap, not focus: the box gets focus back after every update).
+document.addEventListener('click', function (e) { if (e.target.id === 'q' && !S.whenOpen) { S.whenOpen = true; render(); } });
 document.addEventListener('change', function (e) {
+  if (e.target.hasAttribute('data-when-end')) { S[e.target.getAttribute('data-when-end')] = e.target.value; render(); return; }
   if (e.target.hasAttribute('data-bf') && S.bdraft) { S.bdraft[e.target.getAttribute('data-bf')] = e.target.value; return; }
   if (S.view === 'expense') expenseInput(e.target);
 });

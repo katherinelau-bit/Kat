@@ -409,6 +409,33 @@ function syncMerge() {
 }
 
 // Linking devices through the API: devices sharing a key see each other's bills and trips; turning it off is final.
+// Categories: saved on bills and trip expenses; only the payer (or whoever can edit the expense) changes them.
+async function categorySuite(name, call) {
+  let r = await call('POST', '/api/bills', { title: 'Grab home', payerName: 'Kat', category: 'transport', items: [{ name: 'Ride', qty: 1, price: 2300 }] });
+  const { id, token } = r.body;
+  r = await call('GET', '/api/bills/' + id); assert.equal(r.body.bill.category, 'transport');
+  r = await call('POST', '/api/bills', { title: 'Odd', payerName: 'Kat', category: 'bogus', items: [{ name: 'X', qty: 1, price: 100 }] });
+  assert.equal((await call('GET', '/api/bills/' + r.body.id)).body.bill.category, '', 'unknown categories are not stored');
+  const friend = (await call('POST', '/api/bills/' + id + '/join', { name: 'Mei' })).body.token;
+  assert.equal((await call('PUT', '/api/bills/' + id + '/category', { category: 'fun' }, friend)).status, 403);
+  r = await call('PUT', '/api/bills/' + id + '/category', { category: 'fun' }, token);
+  assert.equal(r.status, 200); assert.equal(r.body.bill.category, 'fun');
+  // Editing the bill keeps or changes it.
+  r = await call('PUT', '/api/bills/' + id, { title: 'Grab home', items: [{ name: 'Ride', qty: 1, price: 2300 }] }, token);
+  assert.equal(r.body.bill.category, 'fun');
+  r = await call('PUT', '/api/bills/' + id, { title: 'Grab home', category: 'transport', items: [{ name: 'Ride', qty: 1, price: 2300 }] }, token);
+  assert.equal(r.body.bill.category, 'transport');
+  // Trip expenses.
+  r = await call('POST', '/api/trips', { title: 'Ipoh', name: 'Kat' }); const t = r.body;
+  const mei = (await call('POST', '/api/trips/' + t.id + '/join', { name: 'Mei' })).body.token;
+  r = await call('POST', '/api/trips/' + t.id + '/expenses', { title: 'Hotel', paidBy: t.memberId, amount: 20000, mode: 'equal', among: [t.memberId], category: 'stay' }, t.token);
+  const e = r.body.trip.expenses[0]; assert.equal(e.category, 'stay');
+  assert.equal((await call('PUT', '/api/trips/' + t.id + '/expenses/' + e.id + '/category', { category: 'food' }, mei)).status, 403);
+  r = await call('PUT', '/api/trips/' + t.id + '/expenses/' + e.id + '/category', { category: 'food' }, t.token);
+  assert.equal(r.body.trip.expenses[0].category, 'food');
+  console.log('passed: categories, ' + name);
+}
+
 // A trip budget: only the person who made the trip sets or removes it; everyone sees it.
 async function budgetSuite(name, call) {
   let r = await call('POST', '/api/trips', { title: 'Bangkok', name: 'Kat' }); const { id, token: owner } = r.body;
@@ -431,6 +458,56 @@ async function budgetSuite(name, call) {
   r = await call('DELETE', '/api/trips/' + id + '/budget', null, owner);
   assert.equal(r.status, 200); assert.equal(r.body.trip.budget, null);
   console.log('passed: trip budget, ' + name);
+}
+
+// Wrapped: a month of one person's spending with friends (bills and trip expenses), in RM, with who paid back
+// fastest and what the money went on.
+function wrappedStats() {
+  const W = require('./public/wrapped.js'), T = Date.parse('2026-10-05T12:00:00Z');
+  const bill = (title, date, items, members, payer = 'me', extra = {}) => Object.assign({ title, date, createdAt: T, payerId: payer, items: items.map((n, i) => ({ id: 'i' + i, name: n[0], price: n[1] })), members }, extra);
+  const m = (id, name, picks, pay) => ({ id, name, picks, pay: pay || { status: 'unpaid' } });
+  const bills = [
+    bill('Mamak supper', '2026-10-03', [['Roti canai', 350], ['Teh tarik', 280], ['Maggi goreng', 850]], [m('me', 'Kat', ['i0']), m('s', 'Sarah', ['i1'], { status: 'paid', slipAt: T + 4 * 60000 }), m('j', 'Jason', ['i2'], { status: 'sent', slipAt: T + 3 * 3600e3 })]),
+    bill('Late night', '2026-10-10', [['Roti telur', 450], ['Teh tarik', 280]], [m('me', 'Kat', ['i0']), m('s', 'sarah ', ['i1'], { status: 'paid', slipAt: T + 6 * 60000 })]),
+    bill('Sushi night', '2026-10-12', [['Salmon sushi', 3000]], [m('x', 'Mei', ['i0']), m('me', 'Kat', ['i0'])], 'x'),
+    bill('Bangkok street food', '2026-10-20', [['Pad thai', 10000]], [m('me', 'Kat', ['i0'])], 'me', { currency: 'THB', rate: 0.13 }),
+    bill('Tom yum place', '2026-09-30', [['Tom yum', 2800]], [m('me', 'Kat', ['i0'])]),
+    bill('Not mine', '2026-10-15', [['Burger', 2000]], [m('z', 'Zed', ['i0'])], 'z'),
+  ];
+  // A trip: the hotel (paid by Kat, split with Sarah) is the biggest spend; Grab was paid by Sarah.
+  const trip = { title: 'Penang', createdAt: T, members: [{ id: 'k', name: 'Kat' }, { id: 'sa', name: 'Sarah' }, { id: 'o', name: 'Other' }], expenses: [
+    { title: 'Hotel 2 nights', date: '2026-10-25', paidBy: 'k', amount: 40000, mode: 'equal', among: ['k', 'sa'] },
+    { title: 'Grab to airport', date: '2026-10-26', paidBy: 'sa', amount: 3000, mode: 'equal', among: ['k', 'sa'] },
+    { title: 'Not with Kat', date: '2026-10-26', paidBy: 'o', amount: 999, mode: 'equal', among: ['o'] },
+  ] };
+  const meOf = (b) => (b.members.some((x) => x.id === 'me') ? 'me' : null), tripMe = () => 'k';
+  assert.deepEqual(W.months(bills, meOf), ['2026-10', '2026-09']);
+  let s = W.month(bills, '2026-10', meOf);
+  assert.equal(s.count, 4);
+  assert.equal(s.fronted, 1480 + 730 + 1300, 'fronted counts bills this person paid, abroad ones in RM');
+  assert.equal(s.frontedFor, 1130 + 280);
+  assert.deepEqual([s.fastest.name, W.took(s.fastest.avg)], ['Sarah', '5 mins'], 'the same friend across bills, names tidied');
+  assert.deepEqual([s.category.name, s.cuisine.name], ['Food & drinks', 'Mamak']);
+  assert.deepEqual([s.dish.name, s.dish.times], ['Teh tarik', 2]);
+  // With the trip: the hotel and Grab count, the expense without Kat does not; money now went mostly on the hotel.
+  s = W.month(bills, '2026-10', meOf, [trip], tripMe);
+  assert.deepEqual([s.count, s.bills, s.expenses], [6, 4, 2]);
+  assert.equal(s.fronted, 1480 + 730 + 1300 + 40000);
+  assert.equal(s.spent, 350 + 450 + 1500 + 1300 + 20000 + 1500);
+  assert.deepEqual([s.category.name, s.category.icon, s.category.pct], ['Hotel & stays', '🏨', Math.round(20000 / s.spent * 100)]);
+  assert.deepEqual([s.buddy.name, s.buddy.times], ['Sarah', 4]);
+  assert.deepEqual([s.biggest.title, s.biggest.trip], ['Hotel 2 nights', 'Penang']);
+  assert.deepEqual(W.months([], meOf, [trip], tripMe), ['2026-10']);
+  assert.deepEqual(['Kopitiam breakfast', 'Steak house', 'Tealive run', 'Teh tarik session', 'Dinner', 'Mala hotpot', 'Malaysia trip'].map((t) => W.cuisineOf({ title: t, items: [] })), ['Chinese', 'Western', 'Café', 'Mamak', 'Other', 'Chinese', 'Other']);
+  assert.deepEqual(['Hotel Penang', 'Grab rides', 'Uniqlo', 'Barang dapur', 'GSC movie', 'Unifi bill', 'Dinner', 'Random stuff'].map((t) => W.categoryOf({ title: t, items: [] })),
+    ['Hotel & stays', 'Transport', 'Shopping', 'Groceries', 'Fun & activities', 'Bills & subscriptions', 'Food & drinks', 'Other']);
+  assert.equal(W.categoryOf({ title: 'Hotel', items: [{ name: 'Breakfast' }] }), 'Hotel & stays', 'the name counts more than one line');
+  assert.equal(W.categoryOf({ title: 'Muthu', items: [{ name: 'Roti canai' }, { name: 'Teh tarik' }] }), 'Food & drinks', 'dishes alone tell food');
+  assert.equal(W.categoryKey({ title: 'Grab', category: 'fun', items: [] }), 'fun', 'a picked category wins over the guess');
+  assert.equal(W.categoryKey({ title: 'Grab', category: 'nope', items: [] }), 'transport');
+  assert.equal(W.month([bill('Day 2', '2026-10-01', [['Stuff', 500]], [m('me', 'Kat', ['i0'])], 'me', { category: 'shopping' })], '2026-10', meOf).category.name, 'Shopping');
+  assert.deepEqual([W.took(30e3), W.took(90 * 60e3), W.took(3 * 864e5)], ['1 min', '2 hours', '3 days']);
+  console.log('passed: wrapped');
 }
 
 // The back office: the owner and team members sign in; each role sees only what it may; private tokens never leave.
@@ -783,6 +860,7 @@ async function tripItemsSuite(name, call) {
   photoCleanup();
   tripMaths();
   syncMerge();
+  wrappedStats();
   currencies();
   await ratesCheck();
   await pushNotifications();
@@ -797,6 +875,7 @@ async function tripItemsSuite(name, call) {
   await tripSuite('self-hosted server (SQLite)', viaHttp);
   await tripItemsSuite('self-hosted server (SQLite)', viaHttp);
   await currencySuite('self-hosted server (SQLite)', viaHttp);
+  await categorySuite('self-hosted server (SQLite)', viaHttp);
   await budgetSuite('self-hosted server (SQLite)', viaHttp);
   await adminSuite('self-hosted server (SQLite)', viaHttp);
   await syncSuite('self-hosted server (SQLite)', viaHttp, () => { const { DatabaseSync } = require('node:sqlite'); const d = new DatabaseSync(require('node:path').join(process.env.DATA_DIR, 'bei-cin-lah.db')); const t = d.prepare('SELECT id, data FROM syncs').all().map((x) => x.id + ' ' + x.data).join('\n'); d.close(); return t; });
@@ -812,6 +891,7 @@ async function tripItemsSuite(name, call) {
   await tripSuite('Netlify function (Blobs stand-in)', viaFunction);
   await tripItemsSuite('Netlify function (Blobs stand-in)', viaFunction);
   await currencySuite('Netlify function (Blobs stand-in)', viaFunction);
+  await categorySuite('Netlify function (Blobs stand-in)', viaFunction);
   await budgetSuite('Netlify function (Blobs stand-in)', viaFunction);
   await adminSuite('Netlify function (Blobs stand-in)', viaFunction);
   await syncSuite('Netlify function (Blobs stand-in)', viaFunction, () => fb.dump());

@@ -1,6 +1,6 @@
 # Bei Cin Lah
 
-Split restaurant bills with friends. The payer adds a receipt and a DuitNow QR, friends open a link, type their
+Split bills and trips with friends: meals, hotels, transport, shopping. The payer adds a receipt and a DuitNow QR, friends open a link, type their
 name (no account, no password), tick what they ate, and see exactly what they owe with service charge and SST
 included. They pay by DuitNow, upload the slip, and the payer confirms.
 

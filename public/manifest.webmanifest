@@ -1,7 +1,7 @@
 {
   "name": "Bei Cin Lah",
   "short_name": "Bei Cin Lah",
-  "description": "Split restaurant bills with friends. Scan the receipt, pick your dishes, pay by DuitNow.",
+  "description": "Split bills and trips with friends: meals, hotels, transport, shopping. Everyone picks their share and pays back by DuitNow.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

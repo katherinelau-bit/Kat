@@ -264,3 +264,56 @@ body{background:url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.or
 .budget.near .bbar span{background:var(--sunset)}
 .budget.over .bbar span{background:var(--bad)}
 .bover{color:var(--bad)}
+
+/* Friends' names when adding someone */
+.namechips{align-items:center}
+.namechips .btn{font-weight:800}
+.namehint{margin:0;min-height:0}
+.namehint:empty{display:none}
+
+/* Bills and Trips pages */
+.hometabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:5px;border-radius:16px;background:var(--surface);border:1px solid var(--line)}
+.hometabs button{font:inherit;font-weight:800;font-size:16px;border:0;border-radius:12px;padding:11px 8px;background:transparent;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;position:relative}
+.hometabs button[aria-selected="true"]{background:var(--sky);color:#fff;box-shadow:0 6px 16px -8px rgba(47,128,237,.7)}
+.hometabs .cnt{font-size:12px;font-weight:900;border-radius:99px;padding:1px 8px;background:var(--line);color:var(--ink)}
+.hometabs button[aria-selected="true"] .cnt{background:rgba(255,255,255,.25);color:#fff}
+.hometabs .dot{position:absolute;top:8px;right:12px;width:9px;height:9px;border-radius:50%;background:var(--bad)}
+/* Big totals (RM 1,713.00 and up) shrink a little on narrow phones instead of being cut off. */
+.tile .v{font-size:clamp(18px,5.6vw,25px)}
+
+/* Categories */
+.cattag{display:inline-flex;align-items:center;gap:4px;font:inherit;font-size:12px;font-weight:800;border-radius:99px;padding:3px 10px;background:var(--line);color:var(--ink);border:0;white-space:nowrap}
+button.cattag{cursor:pointer} button.cattag span{opacity:.6}
+.catgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.catgrid .btn{white-space:normal;text-align:left}
+.catfield{grid-column:1/-1}
+/* Easier to spot: bigger, tinted, with a border. */
+.cattag{font-size:14px;padding:6px 12px;background:rgba(47,128,237,.14);color:var(--ink);border:1.5px solid rgba(47,128,237,.45)}
+button.cattag:hover{background:rgba(47,128,237,.24)}
+
+/* Date filter on the home lists */
+.datechips{gap:6px}
+.datechips .btn{padding:6px 12px}
+.whenpick{margin-top:-4px}
+/* One swipeable row on phones instead of three wrapped rows. */
+.datechips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;margin:0 -16px;padding:2px 16px}
+.datechips::-webkit-scrollbar{display:none}
+.datechips .btn{flex:0 0 auto}
+/* 📅 next to the search box: highlighted while a date filter is on. */
+.search .datebtn{font-size:18px;padding:8px 12px;flex:0 0 auto}
+.search .datebtn.on,.search .datebtn[aria-expanded="true"]{border-color:var(--sky);background:rgba(47,128,237,.14)}
+
+/* Wrapped: one slim tappable banner on the home page */
+.wrapbar{display:flex;align-items:center;gap:12px;width:100%;border:0;border-radius:16px;padding:12px 16px;cursor:pointer;text-align:left;font:inherit;color:#fff;
+  background:linear-gradient(100deg,#ff7a45 0%,#ff4f7b 55%,#5b3df5 100%);box-shadow:0 8px 20px -12px rgba(91,61,245,.8)}
+.wrapbar .wb-icon{font-size:24px;line-height:1}
+.wrapbar .wb-text{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25}
+.wrapbar .wb-text b{font-family:var(--font-display);font-weight:900;font-size:16px}
+.wrapbar .wb-text span{font-size:13px;opacity:.9}
+.wrapbar .wb-go{font-size:26px;font-weight:900;line-height:1;opacity:.9}
+.wrapbar:active{transform:scale(.99)}
+/* The banner holds two buttons now: share (most of it) and Preview. */
+.wrapbar{padding:6px 8px 6px 6px}
+.wrapbar .wb-main{flex:1;min-width:0;display:flex;align-items:center;gap:12px;border:0;background:transparent;color:inherit;font:inherit;text-align:left;padding:6px 8px;cursor:pointer}
+.wrapbar .wb-prev{flex:0 0 auto;border:1.5px solid rgba(255,255,255,.7);background:rgba(255,255,255,.15);color:#fff;font:inherit;font-weight:800;font-size:13px;border-radius:99px;padding:6px 12px;cursor:pointer}
+.wrapbar .wb-text b,.wrapbar .wb-text span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
