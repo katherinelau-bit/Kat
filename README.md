@@ -54,7 +54,9 @@ Claude scans are limited to 15 per hour per visitor to protect your bill. Scans 
 
 ## Back office
 
-`/admin` shows visits per day (each device counts once a day, nothing about who), bills and trips created, money split and paid back, and every bill and trip with the people on it, their shares and payment status. Private links (tokens), slips and QR codes are never sent to it. It can download everything as a CSV. Set `ADMIN_KEY` to a long password to switch it on; the page keeps the password only until the tab is closed.
+`/admin` shows visits per day (each device counts once a day, nothing about who), bills and trips created, money split and paid back, and every bill and trip with the people on it, their shares and payment status. Private links (tokens), slips and QR codes are never sent to it. It can download everything as a CSV. Set `ADMIN_KEY` to a long password to switch it on, then sign in as `owner` with it.
+
+The owner can add team members, each with a username, password and role: **Admin** (everything, and the team), **Manager** (everything except the team) or **Viewer** (numbers and charts only: the server sends viewers no names, titles or items). Admins can change roles, reset passwords, turn accounts off and remove them; each takes effect at once. Passwords are stored as scrypt hashes; a sign-in lasts 12 hours in that browser tab. Changing `ADMIN_KEY` signs everyone out.
 
 ## How it works
 

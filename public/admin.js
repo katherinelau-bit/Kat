@@ -1,11 +1,15 @@
-/* Bei Cin Lah back office: visits, bills, trips and who owes what, for the owner of the site.
- * Locked by the ADMIN_KEY password (kept in this tab only). All numbers are worked out here from GET /api/admin. */
+/* Bei Cin Lah back office: visits, bills, trips and who owes what, for the owner of the site and their team.
+ * Sign in as "owner" with the ADMIN_KEY password, or with a team account. The session (12 hours) is kept in this tab only.
+ * What each role sees is decided by the server; all numbers are worked out here from GET /api/admin. */
 (function () {
 'use strict';
 var $ = function (s) { return document.querySelector(s); };
 var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
-var KEY = 'bcl.admin';
-var A = { data: null, range: 30, q: '', tq: '', open: {}, err: '', busy: false };
+var KEY = 'bcl.admin.session';
+var ROLE = { admin: 'Admin', manager: 'Manager', viewer: 'Viewer' };
+var ROLE_INFO = { admin: 'Everything, and can manage the team', manager: 'Everything except the team', viewer: 'Numbers and charts only, no names' };
+var A = { data: null, staff: null, range: 30, q: '', tq: '', open: {}, err: '', busy: false, user: '', flash: '',
+  add: { name: '', username: '', role: 'viewer', password: '' }, reset: '', resetPw: '', confirmDel: '', pwOpen: false, mypw: { old: '', pw: '' } };
 
 /* ---------- money and dates ---------- */
 var fx = function (x) { return !!(x && x.currency && x.currency !== 'MYR'); };
@@ -41,51 +45,86 @@ function tripInfo(t) {
 function tname(t, id) { var m = t.members.filter(function (x) { return x.id === id; })[0]; return m ? m.name : 'Someone'; }
 
 /* ---------- loading ---------- */
+var token = function () { try { return sessionStorage.getItem(KEY) || ''; } catch (e) { return ''; } };
+var setToken = function (t) { try { if (t) sessionStorage.setItem(KEY, t); else sessionStorage.removeItem(KEY); } catch (e) {} };
+async function call(method, path, body) {
+  var r;
+  try { r = await fetch('/api/admin' + path, { method: method, headers: { 'content-type': 'application/json', 'x-token': token() }, body: body ? JSON.stringify(body) : undefined, cache: 'no-store' }); }
+  catch (e) { throw new Error('No connection. Try again.'); }
+  var j = {}; try { j = await r.json(); } catch (e) {}
+  // Signed out (expired, password changed, account removed): back to the sign-in form.
+  if (r.status === 401 && path !== '/login') { setToken(''); A.data = null; A.staff = null; A.err = j.error || 'Please sign in'; }
+  if (!r.ok) { var x = new Error(j.error || 'Something went wrong'); x.status = r.status; throw x; }
+  return j;
+}
 async function load() {
-  var key = ''; try { key = sessionStorage.getItem(KEY) || ''; } catch (e) {}
-  if (!key) return paint();
+  if (!token()) return paint();
   A.busy = true; paint();
   try {
-    var r = await fetch('/api/admin', { headers: { 'x-token': key }, cache: 'no-store' });
-    var j = {}; try { j = await r.json(); } catch (e) {}
-    if (!r.ok) { A.err = j.error || 'Could not load'; if (r.status === 401) try { sessionStorage.removeItem(KEY); } catch (e) {} A.data = null; }
-    else { A.err = ''; A.data = j; A.data.bills.sort(function (a, z) { return z.createdAt - a.createdAt; }); A.data.trips.sort(function (a, z) { return z.createdAt - a.createdAt; }); }
-  } catch (e) { A.err = 'No connection. Try again.'; }
+    var j = await call('GET', '');
+    j.bills.sort(function (a, z) { return z.createdAt - a.createdAt; }); j.trips.sort(function (a, z) { return z.createdAt - a.createdAt; });
+    A.data = j; A.err = '';
+    A.staff = j.me.role === 'admin' ? (await call('GET', '/staff')).staff : null;
+  } catch (e) { if (e.status !== 401) A.err = e.message; }
   A.busy = false; paint();
+}
+async function signIn() {
+  A.user = ($('#un').value || '').trim(); var pw = $('#pw').value;
+  if (!A.user || !pw) return;
+  A.busy = true; A.err = ''; paint();
+  try { var j = await call('POST', '/login', { username: A.user, password: pw }); setToken(j.token); A.busy = false; await load(); }
+  catch (e) { A.err = e.message; A.busy = false; paint(); }
+}
+// A password to hand to a new team member: 14 letters and numbers, without look-alikes.
+function makePassword() {
+  var abc = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789', a = new Uint32Array(14); crypto.getRandomValues(a);
+  return Array.prototype.map.call(a, function (n) { return abc[n % abc.length]; }).join('');
 }
 
 /* ---------- drawing ---------- */
 function paint() {
-  var key = ''; try { key = sessionStorage.getItem(KEY) || ''; } catch (e) {}
   var root = $('#admin'), focus = document.activeElement && document.activeElement.id, at = focus ? document.activeElement.selectionStart : 0;
-  if (!A.data) root.innerHTML = lockView(key);
-  else root.innerHTML = dashView();
+  root.innerHTML = A.data ? dashView() : lockView();
   if (focus && $('#' + focus)) { var el = $('#' + focus); el.focus(); try { el.setSelectionRange(at, at); } catch (e) {} }
 }
-function lockView(key) {
-  return '<form class="card lock" id="lockform"><h1>Back office</h1><p class="muted small" style="margin:0">Bei Cin Lah traffic, bills and trips. Enter the admin password set as ADMIN_KEY on Netlify.</p>' +
-    '<input type="password" id="pw" autocomplete="current-password" placeholder="Admin password" aria-label="Admin password"' + (A.busy ? ' disabled' : '') + '>' +
-    (A.err ? '<p class="err">' + esc(A.err) + '</p>' : '') + '<button class="primary" type="submit"' + (A.busy ? ' disabled' : '') + '>' + (A.busy || key ? 'Opening…' : 'Open') + '</button></form>';
+function lockView() {
+  var dis = A.busy ? ' disabled' : '';
+  return '<form class="card lock" id="lockform"><h1>Back office</h1><p class="muted small" style="margin:0">Sign in with the username and password you were given. The site owner signs in as <b>owner</b> with the ADMIN_KEY password.</p>' +
+    '<label class="small" for="un"><b>Username</b></label><input type="text" id="un" autocomplete="username" autocapitalize="none" spellcheck="false" value="' + esc(A.user) + '"' + dis + '>' +
+    '<label class="small" for="pw"><b>Password</b></label><input type="password" id="pw" autocomplete="current-password"' + dis + '>' +
+    (A.err ? '<p class="err" role="alert">' + esc(A.err) + '</p>' : '') + '<button class="primary" type="submit"' + dis + '>' + (A.busy ? 'Signing in…' : 'Sign in') + '</button></form>';
 }
 
+// The same totals from either view of a bill: the full one (admins, managers) or numbers only (viewers).
+function billNums(b) {
+  if (!A.data.full) {
+    var paid = 0, wait = 0; b.owed.forEach(function (o) { if (o.paid) paid += rmOf(o.amount, b); else wait += rmOf(o.amount, b); });
+    return { totalRM: rmOf(b.total, b), people: b.people, paidRM: paid, waitRM: wait, slips: b.slips };
+  }
+  var i = billInfo(b);
+  return { totalRM: i.totalRM, people: b.members.length, paidRM: i.paidRM, waitRM: i.waitRM, slips: b.members.filter(function (m) { return m.hasSlip; }).length };
+}
+function tripNums(t) { return A.data.full ? { totalRM: Settle.total(t), people: t.members.length } : { totalRM: t.total, people: t.people }; }
+
 function dashView() {
-  var d = A.data, bills = d.bills, trips = d.trips;
+  var d = A.data, me = d.me, bills = d.bills, trips = d.trips;
   var rb = bills.filter(function (b) { return inRange(b.createdAt); }), rt = trips.filter(function (t) { return inRange(t.createdAt); });
   var days = A.range ? lastDays(A.range) : lastDays(Math.min(365, Math.max(30, Math.ceil((Date.now() - Math.min.apply(null, [Date.now()].concat(bills.map(function (b) { return b.createdAt; })))) / 864e5) + 1)));
   var visits = 0, fresh = 0;
   Object.keys(d.visits).forEach(function (k) { if (A.range === 0 || days.indexOf(k) > -1) { visits += d.visits[k].visits; fresh += d.visits[k].newDevices; } });
   var people = 0, splitRM = 0, paidRM = 0, waitRM = 0, receipts = 0, abroad = 0, slips = 0, cur = {};
   rb.forEach(function (b) {
-    var i = billInfo(b); people += b.members.length; splitRM += i.totalRM; paidRM += i.paidRM; waitRM += i.waitRM;
+    var i = billNums(b); people += i.people; splitRM += i.totalRM; paidRM += i.paidRM; waitRM += i.waitRM; slips += i.slips;
     if (b.hasReceipt) receipts++; if (fx(b)) abroad++;
-    b.members.forEach(function (m) { if (m.hasSlip) slips++; });
     var k = b.currency || 'MYR'; cur[k] = cur[k] || { n: 0, rm: 0 }; cur[k].n++; cur[k].rm += i.totalRM;
   });
-  var tripRM = 0, tripPeople = 0; rt.forEach(function (t) { tripRM += Settle.total(t); tripPeople += t.members.length; });
+  var tripRM = 0, tripPeople = 0; rt.forEach(function (t) { var i = tripNums(t); tripRM += i.totalRM; tripPeople += i.people; });
   var label = A.range ? 'last ' + A.range + ' days' : 'all time';
 
-  var h = '<div class="row between"><div><h1>Bei Cin Lah back office</h1><div class="muted small">Updated ' + esc(when(d.at)) + ' (Malaysia time) · ' + bills.length + ' bills and ' + trips.length + ' trips in total</div></div>' +
-    '<div class="row"><button data-act="refresh">' + (A.busy ? 'Refreshing…' : 'Refresh') + '</button><button data-act="csv">Download CSV</button><button data-act="lock">Lock</button></div></div>';
+  var h = '<div class="row between"><div><h1>Bei Cin Lah back office</h1><div class="muted small">Signed in as <b>' + esc(me.name) + '</b> · ' + ROLE[me.role] + (me.owner ? ' (owner)' : '') + ' · updated ' + esc(when(d.at)) + ' (Malaysia time)</div></div>' +
+    '<div class="row"><button data-act="refresh">' + (A.busy ? 'Refreshing…' : 'Refresh') + '</button>' + (d.full ? '<button data-act="csv">Download CSV</button>' : '') + (me.owner ? '' : '<button data-act="mypw" aria-expanded="' + A.pwOpen + '">My password</button>') + '<button data-act="signout">Sign out</button></div></div>';
+  if (A.err) h += '<p class="err" role="alert" style="margin-top:12px">' + esc(A.err) + '</p>';
+  if (A.pwOpen) h += myPasswordView();
   h += '<div class="row" style="margin-top:16px" role="group" aria-label="Period">' + [[7, '7 days'], [30, '30 days'], [90, '90 days'], [0, 'All time']].map(function (r) {
     return '<button data-range="' + r[0] + '" aria-pressed="' + (A.range === r[0]) + '">' + r[1] + '</button>'; }).join('') + '</div>';
 
@@ -105,8 +144,48 @@ function dashView() {
   if (codes.length) h += '<h2>Currencies, ' + label + '</h2><div class="tablewrap"><table><thead><tr><th>Currency</th><th class="n">Bills</th><th class="n">Total in RM</th></tr></thead><tbody>' +
     codes.map(function (k) { return '<tr><td>' + esc(k) + '</td><td class="n">' + cur[k].n + '</td><td class="n">' + RM(cur[k].rm) + '</td></tr>'; }).join('') + '</tbody></table></div>';
 
-  h += billsTable(bills) + tripsTable(trips);
+  if (d.full) h += billsTable(bills) + tripsTable(trips);
+  else h += '<div class="card" style="margin-top:28px"><b>Numbers only</b><p class="muted small" style="margin:4px 0 0">As a Viewer you see totals and charts, without bill names or people. Ask an admin if you need more.</p></div>';
+  if (me.role === 'admin') h += teamView();
   return h;
+}
+
+/* ---------- the team (admins only) ---------- */
+function teamView() {
+  var list = A.staff || [], me = A.data.me, f = A.add;
+  var h = '<h2 style="margin-top:36px">Team</h2><p class="muted small">Who can sign in to this back office. <b>Admin</b>: ' + ROLE_INFO.admin.toLowerCase() + '. <b>Manager</b>: ' + ROLE_INFO.manager.toLowerCase() + '. <b>Viewer</b>: ' + ROLE_INFO.viewer.toLowerCase() + '.</p>';
+  if (A.flash) h += '<div class="card" role="status" style="border-color:var(--good);margin-bottom:10px"><div class="row between"><span>' + A.flash + '</span><button data-act="flashclose">Done</button></div></div>';
+  if (!list.length) h += '<div class="card empty">No team members yet. Add someone below.</div>';
+  else {
+    h += '<div class="tablewrap"><table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th class="hide-sm">Last sign-in</th><th>Status</th><th></th></tr></thead><tbody>';
+    list.forEach(function (u) {
+      var self = u.username === me.username;
+      h += '<tr><td><b>' + esc(u.name) + '</b></td><td>' + esc(u.username) + '</td><td>' + (self ? ROLE[u.role] + ' <span class="muted small">(you)</span>' :
+        '<select data-role-of="' + esc(u.username) + '" aria-label="Role for ' + esc(u.name) + '">' + Object.keys(ROLE).map(function (r) { return '<option value="' + r + '"' + (u.role === r ? ' selected' : '') + '>' + ROLE[r] + '</option>'; }).join('') + '</select>') +
+        '</td><td class="hide-sm muted">' + (u.lastLoginAt ? esc(when(u.lastLoginAt)) : 'Never') + '</td><td><span class="pill ' + (u.disabled ? 'unpaid">Turned off' : 'paid">Active') + '</span></td><td>' +
+        (self ? '' : '<div class="row" style="gap:6px;flex-wrap:nowrap"><button data-act="resetopen" data-u="' + esc(u.username) + '">Reset password</button><button data-act="toggle" data-u="' + esc(u.username) + '">' + (u.disabled ? 'Turn on' : 'Turn off') + '</button><button data-act="remove" data-u="' + esc(u.username) + '" style="color:var(--bad)">' + (A.confirmDel === u.username ? 'Tap again to remove' : 'Remove') + '</button></div>') + '</td></tr>';
+      if (A.reset === u.username) h += '<tr class="detail"><td colspan="6"><div class="row"><label class="small" for="rpw"><b>New password for ' + esc(u.name) + '</b></label><input type="text" id="rpw" data-reset autocomplete="new-password" spellcheck="false" value="' + esc(A.resetPw) + '" style="flex:1;min-width:180px"><button data-act="resetgen">Make one</button><button class="primary" data-act="resetsave">Save</button><button data-act="resetcancel">Cancel</button></div><p class="muted small" style="margin:6px 0 0">They are signed out everywhere and use this new password next time.</p></td></tr>';
+    });
+    h += '</tbody></table></div>';
+  }
+  h += '<form class="card" id="addform" style="margin-top:12px;display:flex;flex-direction:column;gap:10px"><b>Add a team member</b>' +
+    '<div class="sub"><div style="display:flex;flex-direction:column;gap:4px"><label class="small" for="an">Name</label><input type="text" id="an" data-add="name" maxlength="40" value="' + esc(f.name) + '" placeholder="e.g. Aisha"></div>' +
+    '<div style="display:flex;flex-direction:column;gap:4px"><label class="small" for="au">Username</label><input type="text" id="au" data-add="username" maxlength="30" autocapitalize="none" spellcheck="false" value="' + esc(f.username) + '" placeholder="e.g. aisha"></div>' +
+    '<div style="display:flex;flex-direction:column;gap:4px"><label class="small" for="ar">Role</label><select id="ar" data-add="role">' + Object.keys(ROLE).map(function (r) { return '<option value="' + r + '"' + (f.role === r ? ' selected' : '') + '>' + ROLE[r] + ': ' + ROLE_INFO[r] + '</option>'; }).join('') + '</select></div>' +
+    '<div style="display:flex;flex-direction:column;gap:4px"><label class="small" for="ap">Password (at least 10 characters)</label><div class="row" style="flex-wrap:nowrap"><input type="text" id="ap" data-add="password" autocomplete="new-password" spellcheck="false" value="' + esc(f.password) + '" style="flex:1"><button type="button" data-act="addgen">Make one</button></div></div></div>' +
+    '<div><button class="primary" type="submit">Add to team</button></div></form>';
+  return h;
+}
+function myPasswordView() {
+  return '<form class="card" id="mypwform" style="margin-top:12px;display:flex;flex-direction:column;gap:8px;max-width:420px"><b>Change my password</b>' +
+    '<label class="small" for="mo">Current password</label><input type="password" id="mo" data-mypw="old" autocomplete="current-password" value="' + esc(A.mypw.old) + '">' +
+    '<label class="small" for="mn">New password (at least 10 characters)</label><input type="password" id="mn" data-mypw="pw" autocomplete="new-password" value="' + esc(A.mypw.pw) + '">' +
+    '<div class="row"><button class="primary" type="submit">Save</button><button type="button" data-act="mypw">Cancel</button></div></form>';
+}
+async function teamCall(method, path, body, msg) {
+  try { await call(method, '/staff' + path, body); A.staff = (await call('GET', '/staff')).staff; A.err = ''; if (msg) A.flash = msg; }
+  catch (e) { A.err = e.message; window.scrollTo(0, 0); }
+  paint();
 }
 function tile(k, v, s) { return '<div class="card tile"><div class="k">' + esc(k) + '</div><div class="v">' + esc(v) + '</div>' + (s ? '<div class="s">' + esc(s) + '</div>' : '') + '</div>'; }
 
@@ -204,23 +283,54 @@ function csv() {
 }
 
 /* ---------- events ---------- */
-document.addEventListener('submit', function (e) {
-  if (e.target.id !== 'lockform') return; e.preventDefault();
-  var v = $('#pw').value; if (!v) return;
-  try { sessionStorage.setItem(KEY, v); } catch (x) {}
-  load();
+document.addEventListener('submit', async function (e) {
+  var id = e.target.id; if (id !== 'lockform' && id !== 'addform' && id !== 'mypwform') return;
+  e.preventDefault();
+  if (id === 'lockform') return signIn();
+  if (id === 'addform') {
+    var f = A.add, pw = f.password, name = f.name.trim(), user = f.username.trim().toLowerCase();
+    try { await call('POST', '/staff', f); } catch (x) { A.err = x.message; return paint(); }
+    A.add = { name: '', username: '', role: f.role, password: '' }; A.err = '';
+    A.staff = (await call('GET', '/staff')).staff;
+    A.flash = 'Added ' + esc(name) + '. Send them the link <b>' + esc(location.origin + '/admin') + '</b>, username <b>' + esc(user) + '</b> and password <b>' + esc(pw) + '</b> privately. This password is not shown again.';
+    return paint();
+  }
+  try { var j = await call('POST', '/password', { old: A.mypw.old, password: A.mypw.pw }); setToken(j.token); A.pwOpen = false; A.mypw = { old: '', pw: '' }; A.err = ''; A.flash = ''; alert('Password changed.'); }
+  catch (x) { A.err = x.message; }
+  paint();
 });
 document.addEventListener('click', function (e) {
   var t = e.target.closest('[data-act],[data-range],[data-open]'); if (!t) return;
   if (t.hasAttribute('data-range')) { A.range = +t.getAttribute('data-range'); return paint(); }
   if (t.hasAttribute('data-open')) { var k = t.getAttribute('data-open'); A.open[k] = !A.open[k]; return paint(); }
-  var act = t.getAttribute('data-act');
+  var act = t.getAttribute('data-act'), u = t.getAttribute('data-u');
+  if (act !== 'remove') A.confirmDel = '';
   if (act === 'refresh') load();
   else if (act === 'csv') csv();
-  else if (act === 'lock') { try { sessionStorage.removeItem(KEY); } catch (x) {} A.data = null; A.err = ''; paint(); }
+  else if (act === 'signout') { setToken(''); A.data = null; A.staff = null; A.err = ''; A.flash = ''; A.pwOpen = false; paint(); }
+  else if (act === 'mypw') { A.pwOpen = !A.pwOpen; A.mypw = { old: '', pw: '' }; A.err = ''; paint(); }
+  else if (act === 'flashclose') { A.flash = ''; paint(); }
+  else if (act === 'addgen') { A.add.password = makePassword(); paint(); }
+  else if (act === 'resetopen') { A.reset = u; A.resetPw = ''; paint(); }
+  else if (act === 'resetgen') { A.resetPw = makePassword(); paint(); }
+  else if (act === 'resetcancel') { A.reset = ''; paint(); }
+  else if (act === 'resetsave') { var who = A.reset, pw = A.resetPw, nm = (A.staff.filter(function (x) { return x.username === who; })[0] || {}).name; A.reset = ''; teamCall('PUT', '/' + encodeURIComponent(who), { password: pw }, 'New password for ' + esc(nm) + ': <b>' + esc(pw) + '</b>. Send it to them privately. It is not shown again.'); }
+  else if (act === 'toggle') { var s = A.staff.filter(function (x) { return x.username === u; })[0]; teamCall('PUT', '/' + encodeURIComponent(u), { disabled: !s.disabled }); }
+  else if (act === 'remove') { if (A.confirmDel !== u) { A.confirmDel = u; return paint(); } A.confirmDel = ''; teamCall('DELETE', '/' + encodeURIComponent(u)); }
+});
+document.addEventListener('change', function (e) {
+  var u = e.target.getAttribute && e.target.getAttribute('data-role-of');
+  if (u) teamCall('PUT', '/' + encodeURIComponent(u), { role: e.target.value });
+  var k = e.target.getAttribute && e.target.getAttribute('data-add'); if (k) A.add[k] = e.target.value;
 });
 document.addEventListener('keydown', function (e) { if ((e.key === 'Enter' || e.key === ' ') && e.target.hasAttribute && e.target.hasAttribute('data-open')) { e.preventDefault(); e.target.click(); } });
-document.addEventListener('input', function (e) { var k = e.target.getAttribute && e.target.getAttribute('data-q'); if (k) { A[k] = e.target.value; paint(); } });
+document.addEventListener('input', function (e) {
+  var g = function (a) { return e.target.getAttribute && e.target.getAttribute(a); };
+  if (g('data-q')) { A[g('data-q')] = e.target.value; return paint(); }
+  if (g('data-add')) A.add[g('data-add')] = e.target.value;
+  else if (e.target.hasAttribute && e.target.hasAttribute('data-reset')) A.resetPw = e.target.value;
+  else if (g('data-mypw')) A.mypw[g('data-mypw')] = e.target.value;
+});
 // Chart tooltips.
 var tip = $('#tip');
 document.addEventListener('mousemove', function (e) {
@@ -231,6 +341,7 @@ document.addEventListener('mousemove', function (e) {
   tip.textContent = t.getAttribute('data-tip'); tip.style.display = 'block';
   var x = Math.min(e.clientX + 12, innerWidth - tip.offsetWidth - 8); tip.style.left = x + 'px'; tip.style.top = (e.clientY - 36) + 'px';
 });
-setInterval(function () { if (A.data && !document.hidden && !A.busy) load(); }, 60000);
+// Fresh numbers every minute, unless someone is typing.
+setInterval(function () { var a = document.activeElement; if (A.data && !document.hidden && !A.busy && !(a && /INPUT|SELECT/.test(a.tagName))) load(); }, 60000);
 load();
 })();

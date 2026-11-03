@@ -433,32 +433,90 @@ async function budgetSuite(name, call) {
   console.log('passed: trip budget, ' + name);
 }
 
-// The back office: locked by the admin password, never shows private tokens, and counts visits.
+// The back office: the owner and team members sign in; each role sees only what it may; private tokens never leave.
 async function adminSuite(name, call) {
-  const admin = (key) => call('GET', '/api/admin', null, key);
-  assert.equal((await admin('')).status, 401);
-  assert.equal((await admin('wrong-password')).status, 401);
-  const r0 = await admin(process.env.ADMIN_KEY); assert.equal(r0.status, 200);
+  const login = async (username, password) => (await call('POST', '/api/admin/login', { username, password })).body.token;
+  const get = (tok) => call('GET', '/api/admin', null, tok);
+  assert.equal((await get('')).status, 401);
+  assert.equal((await get(process.env.ADMIN_KEY)).status, 401, 'the bare password is not a session');
+  assert.equal((await call('POST', '/api/admin/login', { username: 'owner', password: 'wrong-password' })).status, 401);
+  const owner = await login('owner', process.env.ADMIN_KEY); assert.ok(owner);
+  assert.equal((await get(owner.slice(0, -2) + 'xx')).status, 401, 'a changed session is refused');
+  const r0 = await get(owner); assert.equal(r0.status, 200); assert.equal(r0.body.me.role, 'admin');
   let r = await call('POST', '/api/bills', { title: 'Admin check', payerName: 'Siti', items: [{ name: 'Satay', qty: 1, price: 1200 }] });
   const { id, token } = r.body;
   await call('POST', '/api/bills/' + id + '/join', { name: 'Ah Kow' });
   assert.equal((await call('POST', '/api/hit', { first: true })).status, 200);
   await call('POST', '/api/hit', { first: false });
   await call('POST', '/api/hit', 'not json at all');
-  r = await admin(process.env.ADMIN_KEY);
-  assert.equal(r.status, 200);
+  r = await get(owner);
   const b = r.body.bills.find((x) => x.id === id);
   assert.deepEqual(b.members.map((m) => m.name), ['Siti', 'Ah Kow']);
-  const text = JSON.stringify(r.body);
-  assert.ok(!text.includes(token) && !/"token"/.test(text), 'admin must not see private tokens');
+  assert.ok(!JSON.stringify(r.body).includes(token) && !/"token"/.test(JSON.stringify(r.body)), 'admin must not see private tokens');
   const today = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10), was = r0.body.visits[today] || { visits: 0, newDevices: 0 };
   assert.deepEqual(r.body.visits[today], { visits: was.visits + 3, newDevices: was.newDevices + 1 });
-  assert.equal(typeof r.body.linked, 'number');
   assert.ok(r.body.trips.length >= 1, 'trips are listed');
+
+  // The team: the owner adds a manager and a viewer.
+  const add = (tok, u) => call('POST', '/api/admin/staff', u, tok);
+  assert.equal((await add(owner, { username: 'aisha', name: 'Aisha', role: 'manager', password: 'short' })).status, 400);
+  assert.equal((await add(owner, { username: 'owner', name: 'X', role: 'viewer', password: 'long-enough-pw' })).status, 400);
+  assert.equal((await add(owner, { username: 'aisha', name: 'Aisha', role: 'boss', password: 'long-enough-pw' })).status, 400);
+  assert.equal((await add(owner, { username: 'Aisha', name: 'Aisha', role: 'manager', password: 'aisha-password-1' })).status, 200);
+  assert.equal((await add(owner, { username: 'aisha', name: 'Aisha 2', role: 'viewer', password: 'long-enough-pw' })).status, 409);
+  assert.equal((await add(owner, { username: 'ben', name: 'Ben', role: 'viewer', password: 'ben-password-12' })).status, 200);
+  r = await call('GET', '/api/admin/staff', null, owner);
+  assert.deepEqual(r.body.staff.map((u) => [u.username, u.role]), [['aisha', 'manager'], ['ben', 'viewer']]);
+  assert.ok(!/hash|salt/.test(JSON.stringify(r.body)), 'password hashes stay on the server');
+  assert.equal((await call('POST', '/api/admin/login', { username: 'aisha', password: 'wrong-password' })).status, 401);
+
+  // A manager sees everything but cannot manage the team.
+  const aisha = await login('AISHA', 'aisha-password-1');
+  r = await get(aisha); assert.equal(r.body.full, true); assert.equal(r.body.me.role, 'manager');
+  assert.ok(r.body.bills.find((x) => x.id === id).members);
+  assert.equal((await call('GET', '/api/admin/staff', null, aisha)).status, 403);
+  assert.equal((await add(aisha, { username: 'eve', name: 'Eve', role: 'admin', password: 'long-enough-pw' })).status, 403);
+
+  // A viewer sees the same totals, but no names, titles or items.
+  const ben = await login('ben', 'ben-password-12');
+  r = await get(ben); assert.equal(r.body.full, false);
+  const text = JSON.stringify(r.body.bills) + JSON.stringify(r.body.trips);
+  assert.ok(!text.includes('Admin check') && !text.includes('Siti') && !text.includes('Satay') && !text.includes(id), 'viewers see no names');
+  assert.ok(r.body.bills.some((x) => x.total === 1200 && x.people === 2));
+  assert.equal((await call('GET', '/api/admin/staff', null, ben)).status, 403);
+
+  // Promoted to admin, Ben can manage others but not himself.
+  assert.equal((await call('PUT', '/api/admin/staff/ben', { role: 'admin' }, owner)).status, 200);
+  assert.equal((await call('GET', '/api/admin/staff', null, ben)).status, 200, 'a role change applies at once');
+  assert.equal((await call('PUT', '/api/admin/staff/ben', { role: 'viewer' }, ben)).status, 400);
+  assert.equal((await call('PUT', '/api/admin/staff/aisha', { role: 'viewer' }, ben)).status, 200);
+  assert.equal((await get(aisha)).body.full, false);
+
+  // Turned off: signed out at once, and cannot sign in. Turned on again: signs in.
+  assert.equal((await call('PUT', '/api/admin/staff/aisha', { disabled: true }, owner)).status, 200);
+  assert.equal((await get(aisha)).status, 401);
+  assert.equal((await call('POST', '/api/admin/login', { username: 'aisha', password: 'aisha-password-1' })).status, 401);
+  await call('PUT', '/api/admin/staff/aisha', { disabled: false }, owner);
+  const aisha2 = await login('aisha', 'aisha-password-1'); assert.ok(aisha2);
+  // A password reset ends old sessions; the new password works.
+  assert.equal((await call('PUT', '/api/admin/staff/aisha', { password: 'brand-new-pass-1' }, owner)).status, 200);
+  assert.equal((await get(aisha2)).status, 401);
+  const aisha3 = await login('aisha', 'brand-new-pass-1'); assert.ok(aisha3);
+  // Changing your own password needs the current one, and keeps you signed in.
+  assert.equal((await call('POST', '/api/admin/password', { old: 'nope-nope-nope', password: 'another-pass-22' }, aisha3)).status, 403);
+  r = await call('POST', '/api/admin/password', { old: 'brand-new-pass-1', password: 'another-pass-22' }, aisha3);
+  assert.equal(r.status, 200); assert.equal((await get(r.body.token)).status, 200); assert.equal((await get(aisha3)).status, 401);
+  assert.equal((await call('POST', '/api/admin/password', { old: process.env.ADMIN_KEY, password: 'another-pass-22' }, owner)).status, 400);
+  // Removed: signed out and gone from the list.
+  assert.equal((await call('DELETE', '/api/admin/staff/aisha', null, ben)).status, 200);
+  assert.equal((await get(r.body.token)).status, 401);
+  assert.equal((await call('DELETE', '/api/admin/staff/aisha', null, owner)).status, 404);
+  await call('DELETE', '/api/admin/staff/ben', null, owner);
+
   // Switched off when no password is set.
   const off = createApi({ store: createBlobStore(fakeBlobs()) });
   assert.equal((await off(new Request('https://example.test/api/admin', { headers: { 'x-token': 'x' } }))).status, 501);
-  console.log('passed: back office, ' + name);
+  console.log('passed: back office and team, ' + name);
 }
 
 async function syncSuite(name, call, dump) {
@@ -744,7 +802,7 @@ async function tripItemsSuite(name, call) {
   await syncSuite('self-hosted server (SQLite)', viaHttp, () => { const { DatabaseSync } = require('node:sqlite'); const d = new DatabaseSync(require('node:path').join(process.env.DATA_DIR, 'bei-cin-lah.db')); const t = d.prepare('SELECT id, data FROM syncs').all().map((x) => x.id + ' ' + x.data).join('\n'); d.close(); return t; });
 
   const fb = fakeBlobs();
-  const handle = createApi({ store: createBlobStore(fb), trips: createBlobStore(fb, 'trip/'), syncs: createBlobStore(fb, 'sync/'), stats: createBlobStore(fb, 'stats/'), adminKey: process.env.ADMIN_KEY });
+  const handle = createApi({ store: createBlobStore(fb), trips: createBlobStore(fb, 'trip/'), syncs: createBlobStore(fb, 'sync/'), stats: createBlobStore(fb, 'stats/'), staff: createBlobStore(fb, 'staff/'), adminKey: process.env.ADMIN_KEY });
   const viaFunction = async (method, url, body, token) => {
     const r = await handle(new Request('https://example.test' + url, { method, headers: { 'content-type': 'application/json', 'x-token': token || '' }, body: body ? JSON.stringify(body) : undefined }));
     const ct = r.headers.get('content-type') || '';

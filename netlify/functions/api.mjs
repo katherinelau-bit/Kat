@@ -9,6 +9,7 @@ const handle = core.createApi({
   trips: blobs.createBlobStore(store, 'trip/'),
   syncs: blobs.createBlobStore(store, 'sync/'),
   stats: blobs.createBlobStore(store, 'stats/'),
+  staff: blobs.createBlobStore(store, 'staff/'),
   adminKey: process.env.ADMIN_KEY || '',
   apiKey: process.env.ANTHROPIC_API_KEY || '',
   model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5',

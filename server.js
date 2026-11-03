@@ -21,6 +21,7 @@ db.exec('CREATE TABLE IF NOT EXISTS images(key TEXT PRIMARY KEY, data TEXT NOT N
 db.exec('CREATE TABLE IF NOT EXISTS trips(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)');
 db.exec('CREATE TABLE IF NOT EXISTS syncs(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)');
 db.exec('CREATE TABLE IF NOT EXISTS stats(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)');
+db.exec('CREATE TABLE IF NOT EXISTS staff(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)');
 const q = {
   getBill: db.prepare('SELECT data FROM bills WHERE id=?'),
   putBill: db.prepare('INSERT INTO bills(id,data,created_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data'),
@@ -37,6 +38,9 @@ const q = {
   getStat: db.prepare('SELECT data FROM stats WHERE id=?'),
   putStat: db.prepare('INSERT INTO stats(id,data,created_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data'),
   allStats: db.prepare('SELECT data FROM stats'),
+  getStaff: db.prepare('SELECT data FROM staff WHERE id=?'),
+  putStaff: db.prepare('INSERT INTO staff(id,data,created_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data'),
+  delStaff: db.prepare('DELETE FROM staff WHERE id=?'), allStaff: db.prepare('SELECT data FROM staff'),
 };
 const rows = (stmt) => stmt.all().map((r) => JSON.parse(r.data));
 const store = {
@@ -96,7 +100,21 @@ const stats = {
   },
   async all() { return rows(q.allStats); },
 };
-const handleApi = createApi({ store, trips, syncs, stats, adminKey: process.env.ADMIN_KEY || '', apiKey: process.env.ANTHROPIC_API_KEY || '', model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5' });
+// The back office team: one document per username.
+const staff = {
+  async getBill(id) { const r = q.getStaff.get(id); return r ? JSON.parse(r.data) : null; },
+  async putBill(d) { q.putStaff.run(d.id, JSON.stringify(d), d.createdAt); },
+  async delBill(id) { q.delStaff.run(id); },
+  async update(id, fn) {
+    const r = q.getStaff.get(id);
+    if (!r) throw new HttpError(404, 'Not found');
+    const d = JSON.parse(r.data), result = fn(d);
+    q.putStaff.run(d.id, JSON.stringify(d), d.createdAt);
+    return { bill: d, result };
+  },
+  async all() { return rows(q.allStaff); },
+};
+const handleApi = createApi({ store, trips, syncs, stats, staff, adminKey: process.env.ADMIN_KEY || '', apiKey: process.env.ANTHROPIC_API_KEY || '', model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5' });
 
 async function toRequest(req, url) {
   const chunks = []; let size = 0;
