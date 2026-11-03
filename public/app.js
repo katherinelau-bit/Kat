@@ -510,6 +510,7 @@ function setTrip(j) { S.trip = j.trip; if (S.store.trips[j.trip.id]) { S.store.t
 function tripNet(t, id) { var b = Settle.balances(t)[id]; return b ? b.net : 0; }
 
 async function loadTrip(id) {
+  S.bdraft = null;
   var h = location.hash.match(/k=([a-f0-9]{48})/);
   if (h) {
     try { var r = await api('POST', '/api/trips/' + id + '/auth', null, h[1]); S.store.trips[id] = { token: h[1], memberId: r.memberId, title: r.trip.title }; saveStore(); } catch (e) {}
@@ -575,12 +576,47 @@ function viewTrip() {
   var my = bal[meId] || { net: 0, paid: 0, owes: 0 };
   h += '<div class="tiles"><div class="tile' + (my.net > 0 ? ' owed' : my.net < 0 ? ' owe' : '') + '"><div class="k">' + (my.net > 0 ? 'You get back' : my.net < 0 ? 'You owe' : 'You are') + '</div><div class="v">' + (my.net ? fmt(Math.abs(my.net)) : 'Settled') + '</div></div><div class="tile"><div class="k">You paid · your share</div><div class="v" style="font-size:16px">Paid ' + fmt(my.paid) + '<br>Share ' + fmt(my.owes) + '</div></div></div>';
   if (!me.hasQr) h += '<div class="alert"><span>Add your DuitNow QR so others can pay you when settling up.</span><button class="btn small primary" data-act="tqr">Add my DuitNow QR</button></div>';
+  h += tripBudgetHtml(t, me, bal);
   h += notifyHtml(t, 'someone pays you');
   h += tripSettleHtml(t, meId);
   h += tripExpensesHtml(t, me);
   h += tripPeopleHtml(t, me, bal);
   h += '<div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="tcopyprivate">Copy my private link (keep private)</button>' + (me.hasQr ? '<button class="btn small" data-act="tqr">Change my DuitNow QR</button>' : '') + (me.isOwner ? '<button class="btn small" data-act="tdelete" style="color:var(--bad)">Delete trip</button>' : '') + '</div>';
   return h;
+}
+/* ---------- trip budget ----------
+ * Set by the person who made the trip, in RM, for each person or the whole group. Spending is counted from the trip's
+ * expenses in RM: your share for a budget per person, everyone's for a group budget. Dates are optional. */
+function todayMY() { return new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10); }
+function dayDiff(a, b) { return Math.round((Date.parse(b) - Date.parse(a)) / 864e5); }
+function days(n) { return n + ' day' + (n === 1 ? '' : 's'); }
+function tripBudgetHtml(t, me, bal) {
+  var b = t.budget;
+  if (S.bdraft) return budgetFormHtml(t);
+  if (!b) return me.isOwner ? '<div class="card"><div><b>Set a budget</b><p class="small muted" style="margin:4px 0 0">Agree on how much to spend, e.g. RM 1,500 each, and everyone sees how the trip is going.</p></div><div><button class="btn small primary" data-act="tbudget">Set a budget</button></div></div>' : '';
+  var each = b.per === 'person', mine = (bal[me.id] || { owes: 0 }).owes, all = Settle.total(t);
+  var spent = each ? mine : all, pct = spent / b.amount, left = b.amount - spent, lvl = pct > 1 ? 'over' : pct >= 0.8 ? 'near' : 'ok';
+  var h = '<div class="card budget ' + lvl + '"><div class="row between"><h3>Budget</h3>' + (me.isOwner ? '<button class="btn small" data-act="tbudget">Edit</button>' : '') + '</div>';
+  h += '<div class="bnum"><span class="mono">' + fmt(spent) + '</span> <span class="muted">of ' + fmt(b.amount) + (each ? ' each' : ' for the group') + ' · ' + Math.round(pct * 100) + '%</span></div>';
+  h += '<div class="bbar" role="progressbar" aria-label="Budget used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.min(100, Math.round(pct * 100)) + '"><span style="width:' + Math.min(100, pct * 100).toFixed(1) + '%"></span></div>';
+  h += '<p class="small" style="margin:0">' + (left < 0 ? '<b class="bover">' + fmt(-left) + ' over ' + (each ? 'your' : 'the') + ' budget</b>' : '<b>' + fmt(left) + ' left</b>') + (each ? ', counting your share of every expense' : '') + '</p>';
+  h += '<p class="small muted" style="margin:0">' + (each ? 'Whole group: ' + fmt(all) + ' of ' + fmt(b.amount * t.members.length) + ' (' + t.members.length + (t.members.length === 1 ? ' person)' : ' people)') : 'Your share so far: ' + fmt(mine)) + '</p>';
+  if (b.start) {
+    var today = todayMY(), len = dayDiff(b.start, b.end) + 1, per = each ? ' each' : '';
+    if (today < b.start) h += '<p class="small muted" style="margin:0">' + days(len) + ' trip, starting in ' + days(dayDiff(today, b.start)) + ': about ' + fmt(Math.floor(b.amount / len)) + ' a day' + per + '.</p>';
+    else if (today > b.end) h += '<p class="small muted" style="margin:0">The trip ended on ' + esc(b.end) + '.</p>';
+    else { var n = dayDiff(today, b.end) + 1; h += '<p class="small" style="margin:0">' + (left > 0 ? days(n) + ' to go: about <b>' + fmt(Math.floor(left / n)) + ' a day' + per + '</b>.' : days(n) + ' to go, and the budget is used up.') + '</p>'; }
+  }
+  return h + '</div>';
+}
+function budgetFormHtml(t) {
+  var d = S.bdraft, each = d.per !== 'group';
+  return '<div class="card"><h3>Trip budget</h3>' +
+    '<div class="row" style="gap:6px;flex-wrap:wrap" role="group" aria-label="The budget is for"><button class="btn small' + (each ? ' primary' : '') + '" aria-pressed="' + each + '" data-act="tbudgetper" data-per="person">Each person</button><button class="btn small' + (each ? '' : ' primary') + '" aria-pressed="' + !each + '" data-act="tbudgetper" data-per="group">Whole group</button></div>' +
+    '<div class="field"><label for="b-amt">Amount in RM, ' + (each ? 'for each person' : 'for the whole group') + '</label><input type="number" inputmode="decimal" min="0" step="0.01" id="b-amt" data-bf="amount" value="' + esc(d.amount) + '" placeholder="e.g. 1500"></div>' +
+    '<div class="two"><div class="field"><label for="b-start">First day (optional)</label><input type="date" id="b-start" data-bf="start" value="' + esc(d.start) + '"></div><div class="field"><label for="b-end">Last day (optional)</label><input type="date" id="b-end" data-bf="end" value="' + esc(d.end) + '"></div></div>' +
+    '<p class="small muted" style="margin:0">With the days filled in, everyone sees how much is left to spend each day. Expenses in other currencies count in RM.</p>' +
+    '<div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn primary" data-act="tbudgetsave">Save budget</button><button class="btn" data-act="tbudgetcancel">Cancel</button>' + (t.budget ? '<button class="btn small" data-act="tbudgetdel" style="color:var(--bad)">Remove budget</button>' : '') + '</div></div>';
 }
 function tripSettleHtml(t, meId) {
   var tr = Settle.transfers(Settle.balances(t)), pending = t.payments.filter(function (p) { return p.status === 'sent'; }), done = t.payments.filter(function (p) { return p.status === 'paid'; });
@@ -768,6 +804,17 @@ function tripAction(act, el) {
   var t = S.trip, d = S.edraft, uid = el.getAttribute('data-uid'), pid = el.getAttribute('data-pid'), done = function (msg) { return function (j) { setTrip(j); render(); if (msg) toast(msg); }; }, fail = function (x) { toast(x.message || 'That did not save'); };
   switch (act) {
     case 'tcreate': createTrip(); return true;
+    case 'tbudget': { var bg = t.budget; S.bdraft = bg ? { amount: fixed(bg.amount), per: bg.per, start: bg.start, end: bg.end } : { amount: '', per: 'person', start: '', end: '' }; render(); var ba = $('#b-amt'); if (ba) ba.focus(); return true; }
+    case 'tbudgetper': S.bdraft.per = el.getAttribute('data-per'); render(); return true;
+    case 'tbudgetcancel': S.bdraft = null; render(); return true;
+    case 'tbudgetsave': {
+      var bd = S.bdraft;
+      if (toC(bd.amount) <= 0) { toast('Enter the budget amount'); return true; }
+      if (!bd.start !== !bd.end) { toast('Fill in both days, or leave both empty'); return true; }
+      if (bd.start && bd.end < bd.start) { toast('The last day is before the first day'); return true; }
+      tapi('PUT', '/budget', { amount: toC(bd.amount), per: bd.per, start: bd.start, end: bd.end }).then(function (j) { S.bdraft = null; done('Budget saved')(j); }).catch(fail); return true;
+    }
+    case 'tbudgetdel': tapi('DELETE', '/budget').then(function (j) { S.bdraft = null; done('Budget removed')(j); }).catch(fail); return true;
     case 'tjoin': joinTrip({ name: ($('#tjname') || {}).value }); return true;
     case 'tclaim': joinTrip({ memberId: uid }); return true;
     case 'tleave': { var was = (tmem(t, tmyId(t)) || {}).name, tid = t.id; tapi('POST', '/leave').then(function (j) { forget('trips', tid); if (S.store.name === was) S.store.name = ''; saveStore(); S.trip = j.trip; render(); toast('Done. Pick your own name, or join with it.'); }).catch(fail); return true; }
@@ -1228,6 +1275,7 @@ document.addEventListener('click', function (e) {
   }
 });
 document.addEventListener('input', function (e) {
+  if (e.target.hasAttribute('data-bf') && S.bdraft) { S.bdraft[e.target.getAttribute('data-bf')] = e.target.value; return; }
   if (e.target.hasAttribute('data-search')) { S.q = e.target.value; render(); return; }
   if (S.view === 'expense') { expenseInput(e.target); return; }
   var t = e.target, d = S.draft; if (!d || S.view !== 'new') return;
@@ -1242,6 +1290,7 @@ document.addEventListener('input', function (e) {
   saveDraft();
 });
 document.addEventListener('change', function (e) {
+  if (e.target.hasAttribute('data-bf') && S.bdraft) { S.bdraft[e.target.getAttribute('data-bf')] = e.target.value; return; }
   if (S.view === 'expense') expenseInput(e.target);
 });
 document.addEventListener('keydown', function (e) {

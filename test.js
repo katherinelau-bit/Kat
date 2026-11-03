@@ -409,6 +409,30 @@ function syncMerge() {
 }
 
 // Linking devices through the API: devices sharing a key see each other's bills and trips; turning it off is final.
+// A trip budget: only the person who made the trip sets or removes it; everyone sees it.
+async function budgetSuite(name, call) {
+  let r = await call('POST', '/api/trips', { title: 'Bangkok', name: 'Kat' }); const { id, token: owner } = r.body;
+  r = await call('POST', '/api/trips/' + id + '/join', { name: 'Mei' }); const mei = r.body.token;
+  assert.equal(r.body.trip.budget, null);
+  const put = (body, tok) => call('PUT', '/api/trips/' + id + '/budget', body, tok);
+  assert.equal((await put({ amount: 150000 }, mei)).status, 403, 'only the trip maker sets the budget');
+  assert.equal((await put({ amount: 150000 })).status, 401);
+  assert.equal((await put({ amount: 0 }, owner)).status, 400);
+  assert.equal((await put({ amount: 150000, start: '2026-12-05', end: '2026-12-01' }, owner)).status, 400, 'last day before first day');
+  r = await put({ amount: 150000, per: 'person', start: '2026-12-01', end: '2026-12-04' }, owner);
+  assert.equal(r.status, 200);
+  assert.deepEqual([r.body.trip.budget.amount, r.body.trip.budget.per, r.body.trip.budget.start, r.body.trip.budget.end], [150000, 'person', '2026-12-01', '2026-12-04']);
+  // Only one day given: both are dropped. Anything other than "group" means per person.
+  r = await put({ amount: 500000, per: 'group', start: '2026-12-01' }, owner);
+  assert.deepEqual([r.body.trip.budget.per, r.body.trip.budget.start, r.body.trip.budget.end], ['group', '', '']);
+  r = await put({ amount: 9900, per: 'everyone' }, owner); assert.equal(r.body.trip.budget.per, 'person');
+  r = await call('GET', '/api/trips/' + id, null, mei); assert.equal(r.body.trip.budget.amount, 9900, 'everyone sees the budget');
+  assert.equal((await call('DELETE', '/api/trips/' + id + '/budget', null, mei)).status, 403);
+  r = await call('DELETE', '/api/trips/' + id + '/budget', null, owner);
+  assert.equal(r.status, 200); assert.equal(r.body.trip.budget, null);
+  console.log('passed: trip budget, ' + name);
+}
+
 // The back office: locked by the admin password, never shows private tokens, and counts visits.
 async function adminSuite(name, call) {
   const admin = (key) => call('GET', '/api/admin', null, key);
@@ -715,6 +739,7 @@ async function tripItemsSuite(name, call) {
   await tripSuite('self-hosted server (SQLite)', viaHttp);
   await tripItemsSuite('self-hosted server (SQLite)', viaHttp);
   await currencySuite('self-hosted server (SQLite)', viaHttp);
+  await budgetSuite('self-hosted server (SQLite)', viaHttp);
   await adminSuite('self-hosted server (SQLite)', viaHttp);
   await syncSuite('self-hosted server (SQLite)', viaHttp, () => { const { DatabaseSync } = require('node:sqlite'); const d = new DatabaseSync(require('node:path').join(process.env.DATA_DIR, 'bei-cin-lah.db')); const t = d.prepare('SELECT id, data FROM syncs').all().map((x) => x.id + ' ' + x.data).join('\n'); d.close(); return t; });
 
@@ -729,6 +754,7 @@ async function tripItemsSuite(name, call) {
   await tripSuite('Netlify function (Blobs stand-in)', viaFunction);
   await tripItemsSuite('Netlify function (Blobs stand-in)', viaFunction);
   await currencySuite('Netlify function (Blobs stand-in)', viaFunction);
+  await budgetSuite('Netlify function (Blobs stand-in)', viaFunction);
   await adminSuite('Netlify function (Blobs stand-in)', viaFunction);
   await syncSuite('Netlify function (Blobs stand-in)', viaFunction, () => fb.dump());
 
