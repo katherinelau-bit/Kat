@@ -676,6 +676,14 @@ async function syncSuite(name, call, dump) {
   r = await call('PUT', '/api/sync', {}, 'z'.repeat(43));
   assert.deepEqual([r.body.bills, r.body.trips], [{}, {}]);
   if (dump) assert.ok(!dump().includes(key), 'sync key stored in plain form');
+  // Linked devices see each other by name; a bad device id is ignored; Unlink takes a device off the list.
+  const dk = 'd'.repeat(10) + require('node:crypto').randomBytes(24).toString('base64url');
+  await call('PUT', '/api/sync', { device: { id: 'phone0000001', name: 'iPhone · Safari' } }, dk);
+  await call('PUT', '/api/sync', { device: { id: 'BAD id!', name: 'x' } }, dk);
+  r = await call('PUT', '/api/sync', { device: { id: 'laptop000001', name: 'Mac · Chrome' } }, dk);
+  assert.deepEqual(r.body.devices.map((d) => d.name).sort(), ['Mac · Chrome', 'iPhone · Safari'], name + ': devices listed by name');
+  r = await call('PUT', '/api/sync', { device: { id: 'laptop000001', name: 'Mac · Chrome' }, leave: true }, dk);
+  assert.deepEqual(r.body.devices.map((d) => d.id), ['phone0000001'], 'an unlinked device leaves the list');
   // Turned off everywhere: every device holding the key is told, and it cannot be filled again.
   assert.equal((await call('DELETE', '/api/sync', null, key)).status, 200);
   r = await call('PUT', '/api/sync', { bills: { bill0005: entry('f', 5000) } }, key);
@@ -871,6 +879,60 @@ async function tripSuite(name, call) {
 }
 
 // A trip meal split by items: everyone picks their own dishes; whoever added or paid can pick for others.
+// "3 Cham, Aaron had 2 and Victor 1": a dish can be picked more than once, up to its quantity, and is split by count.
+async function portionsSuite(name, call) {
+  const items = [{ name: 'Cham (cold)', qty: 3, price: 1500 }, { name: 'Noodles', qty: 1, price: 1000 }];
+  let r = await call('POST', '/api/bills', { title: 'Face To Face', payerName: 'Kat', items, qr: JPEG });
+  const { id, token: owner } = r.body;
+  const A = (await call('POST', '/api/bills/' + id + '/join', { name: 'Aaron' })).body;
+  const V = (await call('POST', '/api/bills/' + id + '/join', { name: 'Victor' })).body;
+  await call('PUT', '/api/bills/' + id + '/picks', { itemIds: ['i1', 'i1', 'i2'] }, A.token);
+  r = await call('PUT', '/api/bills/' + id + '/picks', { itemIds: ['i1'] }, V.token);
+  let c = Split.calc(r.body.bill);
+  assert.deepEqual([c.per[A.memberId].total, c.per[V.memberId].total], [1000 + 1000, 500], name + ': 2 of 3 Cham and 1 of 3');
+  assert.equal(Split.part(c.per[A.memberId].lines[0]), '2 of 3');
+  r = await call('PUT', '/api/bills/' + id + '/picks', { itemIds: ['i1', 'i1', 'i1', 'i1', 'i2', 'i2'] }, A.token);
+  assert.equal(r.body.bill.members.find((m) => m.id === A.memberId).picks.join(), 'i1,i1,i1,i2', 'no more than the receipt quantity');
+  // Everyone taking one still shares equally, as before.
+  r = await call('PUT', '/api/bills/' + id + '/picks', { itemIds: ['i1'] }, A.token);
+  c = Split.calc(r.body.bill);
+  assert.deepEqual([c.per[A.memberId].total, c.per[V.memberId].total, Split.part(c.per[V.memberId].lines[0])], [750, 750, '÷2']);
+  // A trip expense works the same way.
+  const t = (await call('POST', '/api/trips', { title: 'Ipoh', name: 'Aaron' })).body;
+  const tv = (await call('POST', `/api/trips/${t.id}/join`, { name: 'Victor' })).body;
+  r = await call('POST', `/api/trips/${t.id}/expenses`, { title: 'Lunch', paidBy: t.memberId, mode: 'items', items, amount: 1 }, t.token);
+  const e = r.body.trip.expenses[0];
+  await call('PUT', `/api/trips/${t.id}/expenses/${e.id}/picks`, { itemIds: ['i1', 'i1'] }, t.token);
+  r = await call('PUT', `/api/trips/${t.id}/expenses/${e.id}/picks`, { itemIds: ['i1'] }, tv.token);
+  const sh = require('./public/settle.js').shares(r.body.trip.expenses[0]);
+  assert.equal(sh[tv.memberId], 500, name + ': trip expense split by count');
+  console.log('passed: picking 2 of a dish, ' + name);
+}
+
+// The payer says 4 people share the bill and names 2 friends: they tap their name; a third adds their own.
+async function peopleSuite(name, call) {
+  let r = await call('POST', '/api/bills', { title: 'Dinner', payerName: 'Kat', items: [{ name: 'Rice', qty: 1, price: 500 }], people: 4, names: ['Aaron', ' victor ', 'aaron', 'kat', '', 'Extra', 'Too many'] });
+  const { id, token: owner } = r.body;
+  r = await call('GET', '/api/bills/' + id);
+  assert.deepEqual([r.body.bill.people, r.body.bill.members.map((m) => m.name + (m.claimed ? '*' : '')).join()], [4, 'Kat*,Aaron,victor,Extra'], name + ': names cleaned, no repeats, no more than 4 people');
+  const aaron = r.body.bill.members.find((m) => m.name === 'Aaron').id;
+  r = await call('POST', '/api/bills/' + id + '/join', { memberId: aaron });
+  assert.equal(r.status, 200); assert.equal(r.body.memberId, aaron, 'Aaron taps his name'); const aaronTok = r.body.token;
+  assert.equal((await call('POST', '/api/bills/' + id + '/join', { memberId: aaron })).status, 409, 'a taken name cannot be tapped again');
+  // 4 people and 4 names: nobody else can be added until the payer makes it 5.
+  assert.equal((await call('POST', '/api/bills/' + id + '/join', { name: 'Ben' })).status, 409, 'no 5th person on a bill for 4');
+  assert.equal((await call('POST', '/api/bills/' + id + '/members', { name: 'Ben' }, owner)).status, 400, 'the payer cannot add a 5th either');
+  assert.equal((await call('PUT', '/api/bills/' + id + '/people', { people: 3 }, owner)).status, 400, 'not fewer than are on it');
+  assert.equal((await call('PUT', '/api/bills/' + id + '/people', { people: 5 }, aaronTok)).status, 403, 'only the payer changes the number');
+  r = await call('PUT', '/api/bills/' + id + '/people', { people: 5 }, owner);
+  assert.equal(r.body.bill.people, 5);
+  r = await call('POST', '/api/bills/' + id + '/join', { name: 'Ben' });
+  assert.equal(r.body.bill.members.length, 5, 'someone not on the list adds their own name');
+  r = await call('POST', '/api/bills', { title: 'Lunch', payerName: 'Kat', items: [{ name: 'Rice', qty: 1, price: 500 }] });
+  assert.equal((await call('GET', '/api/bills/' + r.body.id)).body.bill.people, 0, 'older bills have no count');
+  console.log('passed: how many people and their names, ' + name);
+}
+
 async function tripItemsSuite(name, call) {
   const Settle = require('./public/settle.js');
   const a = (await call('POST', '/api/trips', { title: 'Ipoh day trip', name: 'Aisha' })).body;
@@ -927,6 +989,8 @@ async function tripItemsSuite(name, call) {
   await suite('self-hosted server (SQLite)', viaHttp);
   await tripSuite('self-hosted server (SQLite)', viaHttp);
   await tripItemsSuite('self-hosted server (SQLite)', viaHttp);
+  await portionsSuite('self-hosted server (SQLite)', viaHttp);
+  await peopleSuite('self-hosted server (SQLite)', viaHttp);
   await currencySuite('self-hosted server (SQLite)', viaHttp);
   await categorySuite('self-hosted server (SQLite)', viaHttp);
   await budgetSuite('self-hosted server (SQLite)', viaHttp);
@@ -943,6 +1007,8 @@ async function tripItemsSuite(name, call) {
   await suite('Netlify function (Blobs stand-in)', viaFunction);
   await tripSuite('Netlify function (Blobs stand-in)', viaFunction);
   await tripItemsSuite('Netlify function (Blobs stand-in)', viaFunction);
+  await portionsSuite('Netlify function (Blobs stand-in)', viaFunction);
+  await peopleSuite('Netlify function (Blobs stand-in)', viaFunction);
   await currencySuite('Netlify function (Blobs stand-in)', viaFunction);
   await categorySuite('Netlify function (Blobs stand-in)', viaFunction);
   await budgetSuite('Netlify function (Blobs stand-in)', viaFunction);

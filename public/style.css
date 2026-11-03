@@ -390,3 +390,22 @@ h2{font-size:21px} h3{font-size:17px}
 .peek img{display:block;width:100%;max-height:70vh;object-fit:contain;margin-top:8px;border-radius:10px;background:#fff}
 .irow.unsure input{border-color:var(--sunset);background:#fff4ec}
 .unsure-note{font-size:12px;font-weight:600;color:var(--warn);margin:8px 0 2px}
+/* "How many did you have?" under a ticked dish bought more than once. */
+.howmany{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:6px 6px 10px;background:var(--accent-soft);border-bottom:1px dashed var(--line);font-size:13px;color:var(--muted)}
+.howmany span{flex:1}
+.howmany b{min-width:18px;text-align:center;color:var(--ink);font-size:16px}
+.howmany .btn{width:34px;height:34px;padding:0;font-size:18px;line-height:1}
+.howmany .btn:disabled{opacity:.35}
+/* New bill: the friends' name boxes. Join: big name buttons to tap. */
+.pnames{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px}
+.pnames input{min-width:0}
+.namepick{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.namepick .btn{display:inline-flex;align-items:center;gap:8px;padding:8px 14px 8px 8px}
+.namepick .av{width:28px;height:28px;font-size:12px}
+/* Linked devices: the quiet line on the home page, and the list in "Link another device". */
+.devline{margin:4px 0 12px}
+.devlist{display:flex;flex-direction:column;gap:6px;margin:4px 0 10px;padding:10px 12px;border:1px solid var(--line);border-radius:14px;background:var(--bg)}
+.devrow{display:flex;align-items:center;gap:8px}
+.devrow b{flex:1;min-width:0}
+/* "Show all 12 bills" under the newest 3 on the home page. */
+.morebtn{display:block;width:100%;margin:2px 0 14px}

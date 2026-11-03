@@ -8,15 +8,20 @@
     var sum = 0; items.forEach(function (i) { sum += i.price; });
     var total = sum + (b.service || 0) + (b.sst || 0) + (b.rounding || 0);
     var per = {}, unSub = 0, unItems = [];
+    // A person's picks can list a dish more than once: "I had 2 of the 3 Cham". The dish is split by those counts,
+    // so 2 + 1 pays 2/3 and 1/3; when everyone took one it is split equally, as before.
     items.forEach(function (it) {
-      var who = members.filter(function (m) { return (m.picks || []).indexOf(it.id) > -1; })
-        .map(function (m) { return m.id; }).sort();
+      var cnt = {};
+      members.forEach(function (m) { var k = count(m.picks, it.id); if (k) cnt[m.id] = k; });
+      var who = Object.keys(cnt).sort(), w = 0;
+      who.forEach(function (id) { w += cnt[id]; });
       if (!who.length) { unSub += it.price; unItems.push(it); return; }
-      var base = Math.floor(it.price / who.length), rem = it.price - base * who.length;
-      who.forEach(function (id) {
-        var c = base + (rem > 0 ? 1 : 0); if (rem > 0) rem--;
+      var parts = who.map(function (id) { return Math.floor(it.price * cnt[id] / w); }), rem = it.price;
+      parts.forEach(function (c) { rem -= c; });
+      who.forEach(function (id, x) {
+        var c = parts[x] + (rem > 0 ? 1 : 0); if (rem > 0) rem--;
         var p = per[id] || (per[id] = { lines: [], sub: 0 });
-        p.lines.push({ id: it.id, name: it.name, cents: c, n: who.length }); p.sub += c;
+        p.lines.push({ id: it.id, name: it.name, cents: c, n: who.length, k: cnt[id], w: w }); p.sub += c;
       });
     });
     var ents = Object.keys(per).map(function (k) { return { k: k, sub: per[k].sub }; });
@@ -37,5 +42,8 @@
     });
     return out;
   }
-  return { calc: calc };
+  function count(picks, id) { var k = 0; (picks || []).forEach(function (x) { if (x === id) k++; }); return k; }
+  // How a line of someone's share reads: "÷2" when shared equally, "×2" for 2 portions alone, "2 of 3" otherwise.
+  function part(l) { return l.n === 1 ? (l.k > 1 ? '×' + l.k : '') : l.w === l.n ? '÷' + l.n : l.k + ' of ' + l.w; }
+  return { calc: calc, count: count, part: part };
 });
