@@ -20,6 +20,7 @@ db.exec('CREATE TABLE IF NOT EXISTS bills(id TEXT PRIMARY KEY, data TEXT NOT NUL
 db.exec('CREATE TABLE IF NOT EXISTS images(key TEXT PRIMARY KEY, data TEXT NOT NULL)');
 db.exec('CREATE TABLE IF NOT EXISTS trips(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)');
 db.exec('CREATE TABLE IF NOT EXISTS syncs(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)');
+db.exec('CREATE TABLE IF NOT EXISTS stats(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)');
 const q = {
   getBill: db.prepare('SELECT data FROM bills WHERE id=?'),
   putBill: db.prepare('INSERT INTO bills(id,data,created_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data'),
@@ -32,11 +33,17 @@ const q = {
   delTrip: db.prepare('DELETE FROM trips WHERE id=?'),
   getSync: db.prepare('SELECT data FROM syncs WHERE id=?'),
   putSync: db.prepare('INSERT INTO syncs(id,data,created_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data'),
+  allBills: db.prepare('SELECT data FROM bills'), allTrips: db.prepare('SELECT data FROM trips'), allSyncs: db.prepare('SELECT data FROM syncs'),
+  getStat: db.prepare('SELECT data FROM stats WHERE id=?'),
+  putStat: db.prepare('INSERT INTO stats(id,data,created_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data'),
+  allStats: db.prepare('SELECT data FROM stats'),
 };
+const rows = (stmt) => stmt.all().map((r) => JSON.parse(r.data));
 const store = {
   async getBill(id) { const r = q.getBill.get(id); return r ? JSON.parse(r.data) : null; },
   async putBill(b) { q.putBill.run(b.id, JSON.stringify(b), b.createdAt); },
   async delBill(id) { q.delBill.run(id); },
+  async all() { return rows(q.allBills); },
   // No await inside, so nothing else can run between the read and the write.
   async update(id, fn) {
     const r = q.getBill.get(id);
@@ -54,6 +61,7 @@ const trips = {
   async getBill(id) { const r = q.getTrip.get(id); return r ? JSON.parse(r.data) : null; },
   async putBill(t) { q.putTrip.run(t.id, JSON.stringify(t), t.createdAt); },
   async delBill(id) { q.delTrip.run(id); },
+  async all() { return rows(q.allTrips); },
   async update(id, fn) {
     const r = q.getTrip.get(id);
     if (!r) throw new HttpError(404, 'Trip not found');
@@ -66,6 +74,7 @@ const trips = {
 const syncs = {
   async getBill(id) { const r = q.getSync.get(id); return r ? JSON.parse(r.data) : null; },
   async putBill(d) { q.putSync.run(d.id, JSON.stringify(d), d.createdAt); },
+  async all() { return rows(q.allSyncs); },
   async update(id, fn) {
     const r = q.getSync.get(id);
     if (!r) throw new HttpError(404, 'Not found');
@@ -74,7 +83,20 @@ const syncs = {
     return { bill: d, result };
   },
 };
-const handleApi = createApi({ store, trips, syncs, apiKey: process.env.ANTHROPIC_API_KEY || '', model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5' });
+// Visits per day for the back office, one document per month.
+const stats = {
+  async getBill(id) { const r = q.getStat.get(id); return r ? JSON.parse(r.data) : null; },
+  async putBill(d) { q.putStat.run(d.id, JSON.stringify(d), d.createdAt); },
+  async update(id, fn) {
+    const r = q.getStat.get(id);
+    if (!r) throw new HttpError(404, 'Not found');
+    const d = JSON.parse(r.data), result = fn(d);
+    q.putStat.run(d.id, JSON.stringify(d), d.createdAt);
+    return { bill: d, result };
+  },
+  async all() { return rows(q.allStats); },
+};
+const handleApi = createApi({ store, trips, syncs, stats, adminKey: process.env.ADMIN_KEY || '', apiKey: process.env.ANTHROPIC_API_KEY || '', model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5' });
 
 async function toRequest(req, url) {
   const chunks = []; let size = 0;
@@ -87,6 +109,7 @@ async function toRequest(req, url) {
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json', '.gz': 'application/gzip' };
 function serveStatic(res, pathname) {
+  if (pathname === '/admin') pathname = '/admin.html';
   const spa = pathname === '/' || pathname === '/new' || pathname === '/t/new' || /^\/b\/[a-z0-9]+(\/edit)?$/.test(pathname) || /^\/t\/[a-z0-9]+(\/add|\/[ex]\/[a-z0-9]+)?$/.test(pathname);
   const file = path.normalize(path.join(PUB, spa ? '/index.html' : pathname));
   if (!file.startsWith(PUB + path.sep)) { res.writeHead(404); return res.end('Not found'); }

@@ -46,10 +46,15 @@ and storage on their pricing page.
 | --- | --- |
 | `ANTHROPIC_API_KEY` | Optional. Reads receipts with Claude first, instead of only on the phone. |
 | `ANTHROPIC_MODEL` | Optional. Defaults to `claude-sonnet-5-5`. |
+| `ADMIN_KEY` | Optional. Password for the back office at `/admin`. Without it the back office is off. |
 | `DATA_DIR` | Self-hosting only. Folder for the database file. |
 | `PORT` | Self-hosting only. Defaults to 3000. |
 
 Claude scans are limited to 15 per hour per visitor to protect your bill. Scans on the phone are free and unlimited.
+
+## Back office
+
+`/admin` shows visits per day (each device counts once a day, nothing about who), bills and trips created, money split and paid back, and every bill and trip with the people on it, their shares and payment status. Private links (tokens), slips and QR codes are never sent to it. It can download everything as a CSV. Set `ADMIN_KEY` to a long password to switch it on; the page keeps the password only until the tab is closed.
 
 ## How it works
 

@@ -21,6 +21,18 @@
   to = "/index.html"
   status = 200
 
+# The back office (public/admin.html), locked by the ADMIN_KEY password.
+[[redirects]]
+  from = "/admin"
+  to = "/admin.html"
+  status = 200
+
+[[headers]]
+  for = "/admin*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
+    Cache-Control = "no-store"
+
 [[redirects]]
   from = "/new"
   to = "/index.html"

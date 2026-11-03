@@ -1307,6 +1307,11 @@ setInterval(function () {
 
 api('GET', '/api/config').then(function (c) { S.cfg = c; if (S.view === 'new' || S.view === 'bill' || S.view === 'trip') render(); }).catch(function () {});
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function () {});
+// Counted once a day per device for the visit numbers in the back office: nothing about who, or which bills.
+try {
+  var today = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10), seen = localStorage.getItem('bcl.seen');
+  if (seen !== today) { localStorage.setItem('bcl.seen', today); fetch('/api/hit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ first: !seen }) }).catch(function () {}); }
+} catch (e) {}
 var sh = location.hash.match(/sync=([A-Za-z0-9_-]{32,64})/);
 if (sh) history.replaceState(null, '', location.pathname);
 route(false);

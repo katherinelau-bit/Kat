@@ -1,6 +1,7 @@
 'use strict';
 // Checks the API end to end, once on the self-hosted server (SQLite) and once the way Netlify runs it (Blobs).
 // Run with: node test.js
+process.env.ADMIN_KEY = 'test-admin-password-123';
 process.env.DATA_DIR = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'bcl-'));
 const assert = require('node:assert/strict');
 const { server } = require('./server.js');
@@ -17,6 +18,7 @@ function fakeBlobs() {
     async getWithMetadata(k, o) { await tick(); const v = m.get(k); if (!v) return null; return { data: o && o.type === 'json' ? JSON.parse(v.data) : v.data, etag: v.etag }; },
     async set(k, data, o) { await tick(); const v = m.get(k); if (o && o.onlyIfMatch && (!v || v.etag !== o.onlyIfMatch)) return { modified: false }; m.set(k, { data, etag: 'e' + (++n) }); return { modified: true, etag: 'e' + n }; },
     async delete(k) { await tick(); m.delete(k); },
+    async list(o) { await tick(); return { blobs: [...m.keys()].filter((k) => k.startsWith((o && o.prefix) || '')).map((key) => ({ key })) }; },
     dump() { return [...m.entries()].map(([k, v]) => k + ' ' + v.data).join('\n'); },
   };
 }
@@ -407,6 +409,34 @@ function syncMerge() {
 }
 
 // Linking devices through the API: devices sharing a key see each other's bills and trips; turning it off is final.
+// The back office: locked by the admin password, never shows private tokens, and counts visits.
+async function adminSuite(name, call) {
+  const admin = (key) => call('GET', '/api/admin', null, key);
+  assert.equal((await admin('')).status, 401);
+  assert.equal((await admin('wrong-password')).status, 401);
+  const r0 = await admin(process.env.ADMIN_KEY); assert.equal(r0.status, 200);
+  let r = await call('POST', '/api/bills', { title: 'Admin check', payerName: 'Siti', items: [{ name: 'Satay', qty: 1, price: 1200 }] });
+  const { id, token } = r.body;
+  await call('POST', '/api/bills/' + id + '/join', { name: 'Ah Kow' });
+  assert.equal((await call('POST', '/api/hit', { first: true })).status, 200);
+  await call('POST', '/api/hit', { first: false });
+  await call('POST', '/api/hit', 'not json at all');
+  r = await admin(process.env.ADMIN_KEY);
+  assert.equal(r.status, 200);
+  const b = r.body.bills.find((x) => x.id === id);
+  assert.deepEqual(b.members.map((m) => m.name), ['Siti', 'Ah Kow']);
+  const text = JSON.stringify(r.body);
+  assert.ok(!text.includes(token) && !/"token"/.test(text), 'admin must not see private tokens');
+  const today = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10), was = r0.body.visits[today] || { visits: 0, newDevices: 0 };
+  assert.deepEqual(r.body.visits[today], { visits: was.visits + 3, newDevices: was.newDevices + 1 });
+  assert.equal(typeof r.body.linked, 'number');
+  assert.ok(r.body.trips.length >= 1, 'trips are listed');
+  // Switched off when no password is set.
+  const off = createApi({ store: createBlobStore(fakeBlobs()) });
+  assert.equal((await off(new Request('https://example.test/api/admin', { headers: { 'x-token': 'x' } }))).status, 501);
+  console.log('passed: back office, ' + name);
+}
+
 async function syncSuite(name, call, dump) {
   const key = 'k'.repeat(10) + require('node:crypto').randomBytes(24).toString('base64url');
   const tok = (c) => c.repeat(48);
@@ -685,10 +715,11 @@ async function tripItemsSuite(name, call) {
   await tripSuite('self-hosted server (SQLite)', viaHttp);
   await tripItemsSuite('self-hosted server (SQLite)', viaHttp);
   await currencySuite('self-hosted server (SQLite)', viaHttp);
+  await adminSuite('self-hosted server (SQLite)', viaHttp);
   await syncSuite('self-hosted server (SQLite)', viaHttp, () => { const { DatabaseSync } = require('node:sqlite'); const d = new DatabaseSync(require('node:path').join(process.env.DATA_DIR, 'bei-cin-lah.db')); const t = d.prepare('SELECT id, data FROM syncs').all().map((x) => x.id + ' ' + x.data).join('\n'); d.close(); return t; });
 
   const fb = fakeBlobs();
-  const handle = createApi({ store: createBlobStore(fb), trips: createBlobStore(fb, 'trip/'), syncs: createBlobStore(fb, 'sync/') });
+  const handle = createApi({ store: createBlobStore(fb), trips: createBlobStore(fb, 'trip/'), syncs: createBlobStore(fb, 'sync/'), stats: createBlobStore(fb, 'stats/'), adminKey: process.env.ADMIN_KEY });
   const viaFunction = async (method, url, body, token) => {
     const r = await handle(new Request('https://example.test' + url, { method, headers: { 'content-type': 'application/json', 'x-token': token || '' }, body: body ? JSON.stringify(body) : undefined }));
     const ct = r.headers.get('content-type') || '';
@@ -698,6 +729,7 @@ async function tripItemsSuite(name, call) {
   await tripSuite('Netlify function (Blobs stand-in)', viaFunction);
   await tripItemsSuite('Netlify function (Blobs stand-in)', viaFunction);
   await currencySuite('Netlify function (Blobs stand-in)', viaFunction);
+  await adminSuite('Netlify function (Blobs stand-in)', viaFunction);
   await syncSuite('Netlify function (Blobs stand-in)', viaFunction, () => fb.dump());
 
   // The real @netlify/blobs client against its own local server, if `npm install` has been run.
@@ -714,6 +746,9 @@ async function tripItemsSuite(name, call) {
     assert.equal(await real.get('probe'), '2');
     // The local server sends no etag on reads (production Netlify is checked live). The adapter must then refuse, not overwrite.
     await real.set('bill/abcdefghij', JSON.stringify({ id: 'abcdefghij', n: 1 }));
+    // The back office lists every bill through the real client too, and only bills.
+    await real.set('trip/zzzzzzzzzz', JSON.stringify({ id: 'zzzzzzzzzz' }));
+    assert.deepEqual((await createBlobStore(real).all()).map((b) => b.id), ['abcdefghij']);
     if (!(await real.getWithMetadata('bill/abcdefghij')).etag) {
       await assert.rejects(createBlobStore(real).update('abcdefghij', (b) => { b.n = 2; }), /no etag/);
       assert.equal(JSON.parse(await real.get('bill/abcdefghij')).n, 1);
