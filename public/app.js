@@ -277,7 +277,7 @@ function adoptQr(b) {
 }
 function newDraft() { return { category: '', title: '', date: new Date().toISOString().slice(0, 10), payerName: S.store.name || '', currency: 'MYR', rate: '', rateNote: '', items: [{ name: '', qty: '1', price: '' }], service: '', sst: '', rounding: '', people: 2, names: [], qr: savedQr(), receipt: '', scanFile: null, scanTotal: 0, scanNote: '' }; }
 // An unfinished new bill is kept on this phone, so a refresh or a closed tab does not lose a scanned receipt.
-var DRAFT_KEY = 'bcl.draft.v1', DRAFT_FIELDS = ['title', 'date', 'payerName', 'currency', 'rate', 'rateNote', 'items', 'service', 'sst', 'rounding', 'people', 'names', 'qr', 'receipt', 'scanTotal', 'scanNote', 'scanTitle'], draftT = null;
+var DRAFT_KEY = 'bcl.draft.v1', DRAFT_FIELDS = ['title', 'date', 'payerName', 'currency', 'rate', 'rateNote', 'items', 'service', 'sst', 'rounding', 'people', 'names', 'qr', 'receipt', 'scanTotal', 'wantTotal', 'scanNote', 'scanTitle'], draftT = null;
 function saveDraft() {
   var d = S.draft; if (!d || d.editId) return;
   clearTimeout(draftT);
@@ -338,7 +338,8 @@ function alertsFor(bills) {
       else if (!s) out += '<div class="alert info"><span>Pick what you ate in ' + esc(b.title) + '.</span><button class="btn small" data-nav="/b/' + b.id + '">Choose items</button></div>';
     } else {
       var n = b.members.filter(function (m) { return !m.isPayer && m.pay.status === 'sent'; }).length;
-      if (n) out += '<div class="alert info"><span>' + n + ' payment slip' + (n > 1 ? 's' : '') + ' waiting for you to confirm in ' + esc(b.title) + '.</span><button class="btn small" data-nav="/b/' + b.id + '">Review</button></div>';
+      var asking = b.members.filter(function (m) { return !m.isPayer && m.pay.status === 'sent' && m.pay.nudgedAt; })[0];
+      if (n) out += '<div class="alert info"><span>' + (asking ? esc(asking.name) + ' is waiting for you. ' : '') + n + ' payment slip' + (n > 1 ? 's' : '') + ' to confirm in ' + esc(b.title) + '.</span><button class="btn small" data-nav="/b/' + b.id + '">Review</button></div>';
     }
   });
   return out;
@@ -369,7 +370,8 @@ function whenRange() {
   if (w === '30') return { from: back(29), to: today };
   if (w === 'lastweek') { var dow = (new Date(today + 'T00:00:00Z').getUTCDay() + 6) % 7; return { from: back(dow + 7), to: back(dow + 1) }; }
   if (w === 'lastmonth') { var first = today.slice(0, 8) + '01', end = back(dayDiff(first, today) + 1); return { from: end.slice(0, 8) + '01', to: end }; }
-  if (w === 'custom' && (S.wFrom || S.wTo)) return { from: S.wFrom || '', to: S.wTo || '' };
+  // "To" starts on today, so nothing is filtered until a "From" is picked or "To" is moved.
+  if (w === 'custom' && (S.wFrom || (S.wTo && S.wTo !== today))) return { from: S.wFrom || '', to: S.wTo || '' };
   return null;
 }
 function whenLabel(r) {
@@ -405,7 +407,7 @@ function viewHome() {
   S.home.forEach(function (b) {
     var id = myId(b); if (!id) return; var c = Split.calc(b), me = mem(b, id);
     if (me.isPayer) b.members.forEach(function (m) { if (!m.isPayer && m.pay.status !== 'paid') owed += rmOf(owedBy(m, c), b); });
-    else if (c.per[id] && me.pay.status !== 'paid') owe += rmOf(owedBy(me, c), b);
+    else if (c.per[id] && me.pay.status === 'unpaid') owe += rmOf(owedBy(me, c), b); // A slip sent is paid as far as the friend goes.
   });
   S.homeTrips.forEach(function (t) { var id = tmyId(t); if (!id) return; var n = tripNet(t, id); if (n > 0) owed += n; else owe -= n; });
   var ud = loadDraft();
@@ -415,7 +417,7 @@ function viewHome() {
   }
   var onTrips = S.homeTab === 'trips';
   if (!onTrips) { h += alertsFor(S.home); h += wrappedHomeHtml(); }
-  h += '<div class="tiles"><div class="tile owe"><div class="k">You owe</div><div class="v">' + fmt(owe) + '</div></div><div class="tile owed"><div class="k">Owed to you</div><div class="v">' + fmt(owed) + '</div></div></div>';
+  h += '<div class="tiles"><div class="tile owe"><div class="k">You owe</div><div class="v">' + fmt(owe) + '</div></div><div class="tile owed"><div class="k">Owed to you</div><div class="v">' + fmt(owed) + '</div></div>' + spentRow() + '</div>';
   // Bills and trips each have their own page: / and /trips.
   var toPay = S.homeTrips.filter(function (t) { var id = tmyId(t); return id && tripNet(t, id) < 0; }).length;
   h += '<div class="hometabs" role="tablist" aria-label="Bills or trips">' +
@@ -442,13 +444,13 @@ function viewHome() {
     var shown = moreCut(list, all, 'bill');
     if (!S.home.length) h += '<div class="card empty">' + mascot('food') + '<h3>No bills yet</h3><p class="muted">Add a receipt, send the link to your friends, and let them pick their dishes. Bills you create or join on this phone show up here.</p><button class="btn primary" data-nav="/new">Add a receipt</button></div>';
     shown.forEach(function (b) {
-      var id = myId(b), c = Split.calc(b), me = id ? mem(b, id) : null, pill = '', line = '';
+      var id = myId(b), c = Split.calc(b), me = id ? mem(b, id) : null, pill = '', line = '', share = '';
       var others = b.members.filter(function (m) { return !m.isPayer && c.per[m.id]; });
       if (!me) pill = '<span class="pill none">Not joined</span>';
-      else if (me.isPayer) { pill = '<span class="pill open">You paid</span>'; line = others.filter(function (m) { return m.pay.status === 'paid'; }).length + ' of ' + others.length + ' settled'; }
+      else if (me.isPayer) { pill = '<span class="pill open">You paid</span>'; if (c.per[id]) share = c.per[id].total; if (others.length) line = others.filter(function (m) { return m.pay.status === 'paid'; }).length + ' of ' + others.length + ' settled'; }
       else if (!c.per[id]) pill = '<span class="pill open">Pick items</span>';
-      else { var st = me.pay.status; pill = '<span class="pill ' + st + '">' + (st === 'paid' ? 'Paid' : st === 'sent' ? 'Slip sent' : 'To pay') + '</span>'; line = 'Your share ' + payText(b, owedBy(me, c)); }
-      h += '<button class="bill" data-nav="/b/' + b.id + '">' + cardIcon(catOf(b)) + '<div class="grow"><div class="t">' + esc(b.title) + '</div><div class="small muted">' + esc(b.date || '') + ' · paid by ' + esc(nm(b, b.payerId)) + ' · ' + fmt(c.total, b.currency) + '</div>' + (line ? '<div class="small mono">' + esc(line) + '</div>' : '') + '</div>' + pill + '</button>';
+      else { var st = me.pay.status; pill = '<span class="pill ' + st + '">' + (st === 'paid' ? 'Paid' : st === 'sent' ? 'Slip sent' : 'To pay') + '</span>'; share = owedBy(me, c); }
+      h += '<button class="bill" data-nav="/b/' + b.id + '">' + cardIcon(catOf(b)) + '<div class="grow"><div class="t">' + esc(b.title) + '</div><div class="small muted">' + esc(b.date || '') + ' · ' + fmt(c.total, b.currency) + (share ? ' · <span class="nowrap">You ' + rmText(share, b) + '</span>' : '') + '</div><div class="small muted billsub">' + esc(line || (me && me.isPayer ? '' : 'Paid by ' + nm(b, b.payerId))) + '</div></div>' + pill + '</button>';
     });
     h += moreBtn(list, shown, 'bill');
   } else {
@@ -465,6 +467,23 @@ function viewHome() {
   h += devicesCard();
   h += '<p class="foot">Reminders show up when someone opens the bill. To send them on WhatsApp, use the Remind button on a bill.</p>';
   return h;
+}
+// A search that is only a date ("nov 2026", "11/2026", "2 nov"), not a friend or a dish.
+function dateSearch() {
+  var w = (S.q || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  var month = function (x) { return x.length >= 3 && MONTHS.some(function (m) { return m.indexOf(x) === 0; }); };
+  return w.length > 0 && w.every(function (x) { return /^\d[\d\/-]*$/.test(x) || month(x); }) && w.some(function (x) { return month(x) || /[\/-]|^\d{4}$/.test(x); });
+}
+// On the pass: what you spent, your own share of everything. It follows the date filter or a date search; otherwise
+// it is this month, shown once there is something to show.
+function spentRow() {
+  var r = whenRange(), q = dateSearch(), month = thisMonth(), label = 'Spent this month';
+  if (r || q) label = 'Spent ' + (q ? '"' + esc(S.q.trim()) + '"' + (r ? ', ' : '') : '') + (r ? esc(whenLabel(r)) : '');
+  var rm = Wrapped.spentWhere(S.home, function (d) {
+    if (!r && !q) return d.slice(0, 7) === month;
+    return inWhen([d, d], r) && (!q || found(dateWords(d)));
+  }, myId, S.homeTrips, tmyId);
+  return rm || r || q ? '<div class="spentrow"><span class="k">' + label + '</span><b>' + fmt(rm) + '</b></div>' : '';
 }
 // The newest 3 bills (or trips) until "Show all" is tapped; a search or date filter always shows every match.
 var FIRST = 3;
@@ -551,7 +570,7 @@ function viewBill() {
       h += '<div class="grow" style="display:flex;flex-direction:column;gap:8px"><p><b>Pay ' + esc(nm(b, b.payerId)) + ' ' + payText(b, my.total) + '</b></p>' +
         (b.hasQr ? '<p class="small muted">Save the QR picture, open your banking app, choose Scan QR, then upload it. Transfer the exact amount.</p>' : '<p class="small muted">' + esc(nm(b, b.payerId)) + ' has not added a DuitNow QR yet.</p>') +
         (st === 'paid' ? '<p class="small" style="color:var(--good);font-weight:700">' + esc(nm(b, b.payerId)) + ' confirmed your payment.</p>' :
-          st === 'sent' ? '<p class="small" style="color:var(--warn);font-weight:700">Slip sent. Waiting for ' + esc(nm(b, b.payerId)) + ' to confirm.</p><div><button class="btn small" data-act="slipbtn">Replace slip</button></div>' :
+          st === 'sent' ? '<p class="small" style="color:var(--warn);font-weight:700">Slip sent. Waiting for ' + esc(nm(b, b.payerId)) + ' to confirm.' + (acm.pay.nudgedAt ? ' Reminded ' + ago(acm.pay.nudgedAt) + '.' : '') + '</p><div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn small primary" data-act="nudge">Remind ' + esc(nm(b, b.payerId)) + ' to confirm</button><button class="btn small" data-act="slipbtn">Replace slip</button></div>' :
           '<div><button class="btn primary" data-act="slipbtn">I have paid, upload slip</button></div>') +
         (acm.hasSlip ? '<div><button class="btn small" data-act="viewslip" data-uid="' + ac + '">View my slip</button></div>' : '') + '</div></div>';
     }
@@ -569,17 +588,21 @@ function viewBill() {
       else { if (s) acts += '<button class="btn small" data-act="markpaid" data-uid="' + m.id + '">Mark paid (cash)</button>'; acts += '<button class="btn small" data-act="remind" data-uid="' + m.id + '">Remind</button>'; }
       if (m.claimed) acts += '<button class="btn small" data-act="resetlink" data-uid="' + m.id + '">Reset link</button>';
     }
-    h += '<div class="person">' + av(b, m.id) + '<div class="grow"><div><b>' + esc(m.name) + (m.id === meId ? ' (you)' : '') + '</b></div><div class="small muted mono">' + (s ? fmt(owedBy(m, c)) + (fx(b) ? ' · ' + rmText(owedBy(m, c), b) : '') : 'No items yet') + (m.remind && st === 'unpaid' && !m.isPayer ? ' · reminded ' + m.remind.count + '×, last ' + ago(m.remind.at) : '') + '</div>' + (isPayer && st === 'sent' ? slipCheckHtml(m) : '') + '</div>' + statusPill(m, c, m.isPayer) + (acts ? '<div class="acts" style="width:100%;padding-left:38px">' + acts + '</div>' : '') + '</div>';
+    h += '<div class="person">' + av(b, m.id) + '<div class="grow"><div><b>' + esc(m.name) + (m.id === meId ? ' (you)' : '') + '</b></div><div class="small muted mono">' + (s ? fmt(owedBy(m, c)) + (fx(b) ? ' · ' + rmText(owedBy(m, c), b) : '') : 'No items yet') + (m.remind && st === 'unpaid' && !m.isPayer ? ' · reminded ' + m.remind.count + '×, last ' + ago(m.remind.at) : '') + (st === 'sent' && m.pay.nudgedAt ? ' · asked you to confirm ' + ago(m.pay.nudgedAt) : '') + '</div>' + (isPayer && st === 'sent' ? slipCheckHtml(m) : '') + '</div>' + statusPill(m, c, m.isPayer) + (acts ? '<div class="acts" style="width:100%;padding-left:38px">' + acts + '</div>' : '') + '</div>';
   });
   h += '</div></div>';
   if (isPayer) h += notifyOffHtml(b, 'bill');
   h += '<div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="summary">Share summary</button>' + (isPayer ? '<button class="btn small" data-nav="/b/' + b.id + '/edit">Edit items</button>' + (b.hasQr ? '<button class="btn small" data-act="addqr">Change DuitNow QR</button>' : '') + '<button class="btn small" data-act="copyadmin">Copy my payer link (keep private)</button><button class="btn small" data-act="delete" style="color:var(--bad)">Delete bill</button>' : '') + '</div>';
   return h;
 }
+// What the receipt says the bill comes to: read off it, or typed in the form.
+function wantTotal(d) { return d.wantTotal === undefined ? d.scanTotal || 0 : toC(d.wantTotal); }
 function totalsHtml(d) {
   var sum = draftSum(d), tot = draftTotal(d), w = '', x = { currency: d.currency, rate: Number(d.rate) || 0 };
   if (fx(x) && x.rate) w += '<span class="small" style="display:block;color:var(--muted);font-weight:400">≈ ' + rmText(tot, x) + ' (' + esc(rateText(x)) + ')</span>';
-  if (d.scanTotal && Math.abs(d.scanTotal - tot) > 1) w = '<span class="small" style="color:var(--warn);display:block;font-weight:400">Receipt total read as ' + fmt(d.scanTotal) + '. Check the items and charges.</span>';
+  var want = wantTotal(d), gap = want - tot;
+  if (want) w = Math.abs(gap) <= 1 ? '<span class="small" style="color:var(--good);display:block;font-weight:600">✓ Matches the receipt total</span>'
+    : '<span class="small" style="color:var(--warn);display:block;font-weight:600">' + (gap > 0 ? 'Still missing ' + fmt(gap) : fmt(-gap) + ' too much') + ' (receipt says ' + fmt(want) + ')</span>';
   return '<span>Total<span class="small" style="display:block;color:var(--muted);font-weight:400">Items ' + fmt(sum) + '</span>' + w + '</span><span>' + fmt(tot) + '</span>';
 }
 // Currency picker, plus the rate to ringgit for anything else. `p` is the field prefix ("f" bill, "e" trip expense).
@@ -612,6 +635,14 @@ function peopleHtml(d) {
   h += '</div><datalist id="pn-list">' + knownNames().slice(0, 50).map(function (x) { return '<option value="' + esc(x) + '">'; }).join('') + '</datalist>';
   return h + '<p class="small muted">Names are optional. Friends tap their name when they open the link, or type their own if it is not there.</p></div>';
 }
+// The photo as taken while it is at hand (sharper for checking), otherwise the small copy kept with the bill.
+function peekSrc(d) {
+  if (!d.scanFile) return d.receipt;
+  if (S.peekFile !== d.scanFile) { S.peekFile = d.scanFile; S.peekUrl = URL.createObjectURL(d.scanFile); }
+  return S.peekUrl;
+}
+// A line read off the photo that needs a look: a price worked out, or a name that looks misread. Editing it clears the mark.
+function itemUnsure(d, it) { return !!(it.guess || (it.read && !it.ok && window.ReceiptParse && window.ReceiptParse.doubtful(it.name, d.currency))); }
 function viewNew() {
   var d = S.draft;
   if (!d) return topbar() + '<div class="card empty">' + mascot('food', true) + '<h3>Opening bill…</h3></div>';
@@ -620,15 +651,20 @@ function viewNew() {
   if (ed) h += '<div class="alert info"><span>Ticks stay on the dishes you keep. A dish you remove comes off whoever ticked it.' + (d.paidCount ? ' ' + d.paidCount + (d.paidCount > 1 ? ' people have' : ' person has') + ' already paid; their confirmed amount stays the same.' : '') + '</span></div>';
   else if (draftStarted(d)) h += '<p class="small muted">Saved on this phone as you go. <button class="btn small" data-act="discarddraft">Start over</button></p>';
   if (!ed) h += '<div class="card"><h3>1. Receipt</h3><div class="drop"><div class="row">' + (d.receipt ? '<img class="thumb" src="' + d.receipt + '" alt="Receipt photo">' : '') + '<div><b>' + (d.receipt ? 'Receipt attached' : 'Add a photo of the receipt') + '</b><div class="small muted">' + 'The items, service charge and SST are read for you. Check them before you create the bill. Friends can view the photo.' + '</div></div></div><div class="row"><button class="btn" data-act="pickreceipt">' + (d.receipt ? 'Change photo' : 'Choose photo') + '</button>' + (d.scanFile ? '<button class="btn primary" data-act="scan"' + (S.scanning ? ' disabled' : '') + '>' + (S.scanning ? 'Reading…' : 'Read receipt') + '</button>' : '') + '</div></div>' +
-    (d.scanNote ? '<p class="small" style="color:var(--warn)">' + esc(d.scanNote) + '</p>' : '') + reportLinkHtml() + '</div>';
+    (d.scanNote ? '<p class="small" style="color:var(--warn)">' + esc(d.scanNote) + '</p>' + (draftSum(d) ? '' : '<button class="btn small" data-act="justtotal">Just use the total</button>') : '') + reportLinkHtml() + '</div>';
   h += '<div class="card"><h3>' + (ed ? 'Items' : '2. Items') + '</h3><div class="two"><div class="field"><label for="f-title">Bill name</label><input type="text" id="f-title" data-f="title" maxlength="80" value="' + esc(d.title) + '" placeholder="e.g. Thai dinner"></div><div class="field"><label for="f-date">Date</label><input type="date" id="f-date" data-f="date" value="' + esc(d.date) + '"></div>' + catSelect('f-cat', 'data-f', d) + '<div class="field"><label for="f-payer">Your name (you paid)</label><input type="text" id="f-payer" data-f="payerName" maxlength="40"' + (ed ? ' disabled' : '') + ' value="' + esc(d.payerName) + '" placeholder="e.g. Katherine"></div></div>';
   h += currencyHtml(d, 'f');
   // The receipt photo, one tap away, to check the dishes against.
-  if (d.receipt && !ed) h += '<details class="peek"><summary>📷 Compare with the receipt</summary><img src="' + d.receipt + '" alt="Receipt photo"></details>';
+  if (d.receipt && !ed) {
+    h += '<div><button class="btn small" data-act="peek">' + (S.peekOpen ? 'Hide receipt' : '📷 Show receipt') + '</button></div>';
+    if (S.peekOpen) h += '<div class="peekbox' + (S.peekZoom ? ' zoom' : '') + '"><img data-act="peekzoom" src="' + esc(peekSrc(d)) + '" alt="Receipt photo. Tap to zoom"></div>';
+  }
+  var toCheck = d.items.filter(function (it) { return itemUnsure(d, it); }).length;
+  if (toCheck) h += '<p class="small" style="color:var(--warn);font-weight:600;margin:6px 0 0">' + (toCheck === 1 ? '1 line' : toCheck + ' lines') + ' to check, marked below.</p>';
   h += '<div class="items"><div class="irow h"><span>Item</span><span>Qty</span><span>Each (' + CUR + ')</span><span style="text-align:right">Total</span><span></span></div>';
-  d.items.forEach(function (it, i) { if (it.guess) h += '<div class="unsure-note">⚠️ Check this one: its price was worked out, not read</div>'; h += '<div class="irow' + (it.guess ? ' unsure' : '') + '"><input type="text" aria-label="Item name" data-i="' + i + '" data-k="name" value="' + esc(it.name) + '" placeholder="Item"><input type="number" min="1" aria-label="Quantity" data-i="' + i + '" data-k="qty" value="' + esc(it.qty) + '"><input type="number" step="0.01" min="0" inputmode="decimal" aria-label="Price of one" data-i="' + i + '" data-k="price" value="' + esc(it.price) + '" placeholder="0.00"><span class="mono small" data-line="' + i + '">' + fmt(lineCents(it)) + '</span><button class="x" data-act="rmitem" data-i="' + i + '" aria-label="Remove item">×</button></div>'; });
-  h += '</div><div><button class="btn small" data-act="additem">Add item</button></div><p class="small muted">Enter the price of one. The bill multiplies it by the quantity, so picking a dish with quantity 2 gives you both.</p></div>';
-  h += '<div class="card"><h3>' + (ed ? 'Charges' : '3. Charges') + '</h3><div class="two"><div class="field"><label for="f-svc">Service charge (' + CUR + ')</label><input type="number" step="0.01" id="f-svc" data-f="service" value="' + esc(d.service) + '" placeholder="0.00"></div><div class="field"><label for="f-sst">' + (CUR === 'MYR' ? 'SST' : 'Tax') + ' (' + CUR + ')</label><input type="number" step="0.01" id="f-sst" data-f="sst" value="' + esc(d.sst) + '" placeholder="0.00"></div><div class="field"><label for="f-rnd">Rounding (' + CUR + ')</label><input type="number" step="0.01" id="f-rnd" data-f="rounding" value="' + esc(d.rounding) + '" placeholder="0.00"></div></div><div class="chips"><button class="btn small" data-act="svc10">Service 10%</button><button class="btn small" data-act="sst6">SST 6%</button><button class="btn small" data-act="sst8">SST 8%</button></div><p class="small muted">The quick buttons work out the amount from your items. SST is applied after service charge. Match them to what the receipt prints.</p><div class="receipt"><div class="chg tot" id="draftTotals">' + totalsHtml(d) + '</div></div></div>';
+  d.items.forEach(function (it, i) { var doubt = itemUnsure(d, it); if (doubt) h += '<div class="unsure-note">⚠️ ' + (it.guess ? 'Check this one: its price was worked out, not read' : 'Check this name') + '</div>'; h += '<div class="irow' + (doubt ? ' unsure' : '') + '"><input type="text" aria-label="Item name" data-i="' + i + '" data-k="name" value="' + esc(it.name) + '" placeholder="Item"><input type="number" min="1" aria-label="Quantity" data-i="' + i + '" data-k="qty" value="' + esc(it.qty) + '"><input type="number" step="0.01" min="0" inputmode="decimal" aria-label="Price of one" data-i="' + i + '" data-k="price" value="' + esc(it.price) + '" placeholder="0.00"><span class="mono small" data-line="' + i + '">' + fmt(lineCents(it)) + '</span><button class="x" data-act="rmitem" data-i="' + i + '" aria-label="Remove item">×</button></div>'; });
+  h += '</div><div class="row" style="gap:8px"><button class="btn small" data-act="additem">Add item</button>' + (ed ? '' : '<button class="btn small" data-act="justtotal">Just use the total</button>') + '</div><p class="small muted">Enter the price of one. The bill multiplies it by the quantity, so picking a dish with quantity 2 gives you both.</p></div>';
+  h += '<div class="card"><h3>' + (ed ? 'Charges' : '3. Charges') + '</h3><div class="two"><div class="field"><label for="f-svc">Service charge (' + CUR + ')</label><input type="number" step="0.01" id="f-svc" data-f="service" value="' + esc(d.service) + '" placeholder="0.00"></div><div class="field"><label for="f-sst">' + (CUR === 'MYR' ? 'SST' : 'Tax') + ' (' + CUR + ')</label><input type="number" step="0.01" id="f-sst" data-f="sst" value="' + esc(d.sst) + '" placeholder="0.00"></div><div class="field"><label for="f-rnd">Rounding (' + CUR + ')</label><input type="number" step="0.01" id="f-rnd" data-f="rounding" value="' + esc(d.rounding) + '" placeholder="0.00"></div></div>' + (d.receipt && !ed ? '<div class="field"><label for="f-want">Total on the receipt (' + CUR + ')</label><input type="number" step="0.01" min="0" inputmode="decimal" id="f-want" data-f="wantTotal" value="' + esc(d.wantTotal !== undefined ? d.wantTotal : d.scanTotal ? fixed(d.scanTotal) : '') + '" placeholder="Shows what is still missing"></div>' : '') + '<div class="chips"><button class="btn small" data-act="svc10">Service 10%</button><button class="btn small" data-act="sst6">SST 6%</button><button class="btn small" data-act="sst8">SST 8%</button></div><p class="small muted">The quick buttons work out the amount from your items. SST is applied after service charge. Match them to what the receipt prints.</p><div class="receipt"><div class="chg tot" id="draftTotals">' + totalsHtml(d) + '</div></div></div>';
   if (!ed) h += peopleHtml(d);
   if (!ed) h += '<div class="card"><h3>5. Your DuitNow QR</h3><div class="drop"><div class="row">' + (d.qr ? '<img class="thumb" src="' + d.qr + '" alt="Your DuitNow QR" style="background:#fff">' : '') + '<div><b>' + (d.qr ? 'QR attached' : 'Add your DuitNow QR picture') + '</b><div class="small muted">' + (d.qr && d.qr === savedQr() ? 'Saved on this phone, so your next bills use it too.' : 'Friends scan it to pay you the exact amount. It stays saved on this phone for your next bills.') + '</div></div></div><div class="row"><button class="btn" data-act="pickqr">' + (d.qr ? 'Change' : 'Choose picture') + '</button>' + (d.qr ? '<button class="linkbtn" data-act="forgetqr">Remove</button>' : '') + '</div></div></div>';
   h += '<div class="row"><button class="btn primary" data-act="create"' + (S.creating ? ' disabled' : '') + '>' + (S.creating ? (ed ? 'Saving…' : 'Creating…') : (ed ? 'Save changes' : 'Create bill')) + '</button><button class="btn" data-nav="' + back + '">Cancel</button></div>';
@@ -656,6 +692,14 @@ function remindText(b, uids) {
   var c = Split.calc(b);
   var lines = uids.map(function (id) { var m = mem(b, id), s = c.per[id]; return '• ' + m.name + ': ' + (s ? payText(b, owedBy(m, c)) : 'please pick your dishes'); });
   return 'Hi, a reminder for "' + b.title + '" (paid by ' + nm(b, b.payerId) + ').\n' + lines.join('\n') + '\nPlease pay via my DuitNow QR and upload your slip here: ' + shareUrl(b) + '\nThank you!';
+}
+// A friend's slip is waiting: the payer gets a notification and a mark on the bill, and the friend a message for WhatsApp,
+// for a payer who has not turned notifications on or never opens the app.
+function nudgePayer(b) {
+  var me = mem(b, myId(b)), name = nm(b, b.payerId), amount = payText(b, owedBy(me, Split.calc(b)));
+  var t = 'Hi ' + name + ', I have paid ' + amount + ' for "' + b.title + '". Please check my slip and tap Confirm received here: ' + shareUrl(b) + '\nThank you!';
+  S.modal = { title: 'Remind ' + name, text: t, wa: 'https://wa.me/?text=' + encodeURIComponent(t) }; paintModal();
+  bapi('POST', '/nudge', {}).then(function (j) { setBill(j); render(); paintModal(); }).catch(function (e) { if (e.status !== 429) toast(e.message); });
 }
 function showReminder(uids, title) {
   var b = S.bill, t = remindText(b, uids);
@@ -754,7 +798,7 @@ function viewTrip() {
 }
 /* ---------- trip summary card ----------
  * A picture of the trip to post on Instagram or WhatsApp: name, total, people, and whether everyone is settled.
- * Drawn on this phone (1080 x 1350); nothing is uploaded. Shown first, then shared or saved by the person. */
+ * Drawn on this phone (1080 wide, about 1500 tall); nothing is uploaded. Shown first, then shared or saved by the person. */
 var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 function shortDate(iso) { var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || ''); return m ? +m[3] + ' ' + MON[+m[2] - 1] + ' ' + m[1] : ''; }
 function tripDates(t) {
@@ -785,91 +829,6 @@ function tripSpend(t) {
   if (list.length > 4) { var rest = list.slice(3).reduce(function (s, x) { return s + x.rm; }, 0); list = list.slice(0, 3).concat([{ key: 'others', rm: rest }]); }
   return { total: total, list: list.map(function (x) { return Object.assign(x, { pct: total ? x.rm / total : 0 }); }) };
 }
-async function tripCard(t) {
-  try { await Promise.all(['900 64px Nunito', '800 32px Nunito', '700 28px Nunito'].map(function (f) { return document.fonts.load(f); })); } catch (e) {}
-  var spend = tripSpend(t), CAT = spend.total > 0 ? (spend.list.length > 2 ? 175 : 125) : 0;
-  var W = 1080, H = 1350 + CAT, c = document.createElement('canvas'); c.width = W; c.height = H;
-  var x = c.getContext('2d'), F = function (wt, px) { return wt + ' ' + px + 'px Nunito, system-ui, sans-serif'; };
-  var bal = Settle.balances(t), total = Settle.total(t), n = t.members.length, settled = t.expenses.length && !Settle.transfers(bal).length;
-  // Sky to sunset, with a few soft suns.
-  var g = x.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#2f80ed'); g.addColorStop(0.62, '#56b4f5'); g.addColorStop(1, '#ffb27a');
-  x.fillStyle = g; x.fillRect(0, 0, W, H);
-  [[930, 150, 120, 'rgba(255,201,60,.9)'], [120, 1240, 170, 'rgba(255,122,69,.35)'], [990, 1180, 90, 'rgba(255,255,255,.18)']].forEach(function (s) { x.fillStyle = s[3]; x.beginPath(); x.arc(s[0], s[1], s[2], 0, 7); x.fill(); });
-  // Dotted flight path.
-  x.strokeStyle = 'rgba(255,255,255,.55)'; x.lineWidth = 5; x.setLineDash([2, 18]); x.lineCap = 'round';
-  x.beginPath(); x.moveTo(70, 250); x.bezierCurveTo(320, 150, 640, 290, 860, 190); x.stroke(); x.setLineDash([]);
-  x.font = F(900, 54); x.fillStyle = '#fff'; x.textBaseline = 'alphabetic'; x.fillText('✈', 868, 214);
-  // Brand.
-  x.font = F(900, 64); x.fillStyle = '#fff'; x.fillText('Bei ', 80, 130); var bw = x.measureText('Bei ').width;
-  x.fillStyle = '#ffc93c'; x.fillText('Cin', 80 + bw, 130); var cw = x.measureText('Cin ').width;
-  x.fillStyle = '#fff'; x.fillText('Lah', 80 + bw + cw, 130);
-  x.font = F(800, 28); x.fillStyle = 'rgba(255,255,255,.85)'; x.fillText('MAKAN-MAKAN, JALAN-JALAN', 82, 178);
-  // The pass.
-  var PX = 70, PY = 280, PW = W - 140, PH = 1010 + CAT;
-  x.save(); x.shadowColor = 'rgba(20,33,61,.28)'; x.shadowBlur = 40; x.shadowOffsetY = 18; roundRect(x, PX, PY, PW, PH, 44); x.fillStyle = '#fff'; x.fill(); x.restore();
-  roundRect(x, PX, PY, PW, 92, 44); x.save(); x.clip(); x.fillStyle = '#ff7a45'; x.fillRect(PX, PY, PW, 92); x.restore();
-  x.fillStyle = '#ff7a45'; x.fillRect(PX, PY + 50, PW, 42);
-  x.font = F(900, 30); x.fillStyle = '#fff'; x.fillText('TRIP PASS', PX + 50, PY + 58);
-  x.textAlign = 'right'; x.fillText('SEDAP ✓', PX + PW - 50, PY + 58); x.textAlign = 'left';
-  var L = PX + 56, IW = PW - 112, y = PY + 170;
-  x.fillStyle = '#14213d'; x.font = F(900, 66);
-  var tl = fitLines(x, t.title, IW, 2); tl.forEach(function (l) { x.fillText(l, L, y); y += 76; });
-  x.font = F(700, 32); x.fillStyle = '#5d6b82'; x.fillText(tripDates(t), L, y - 18); y += 52;
-  // Total.
-  x.font = F(800, 28); x.fillStyle = '#5d6b82'; x.fillText('SPENT TOGETHER', L, y); y += 92;
-  x.font = F(900, 104); x.fillStyle = '#14213d'; x.fillText(fmt(total), L, y); y += 64;
-  // Three small stats.
-  var stats = [[n + (n === 1 ? ' friend' : ' friends'), 'on the trip'], [t.expenses.length + (t.expenses.length === 1 ? ' expense' : ' expenses'), 'added'], [n ? fmt(Math.round(total / n)) : fmt(0), 'each, on average']];
-  var sw = IW / 3;
-  stats.forEach(function (s, i) { var sx = L + i * sw; x.font = F(900, 38); x.fillStyle = '#2f80ed'; x.fillText(fitLines(x, s[0], sw - 20, 1)[0], sx, y); x.font = F(700, 26); x.fillStyle = '#5d6b82'; x.fillText(s[1], sx, y + 38); });
-  y += 100;
-  // Where it went: one bar split by category, then up to four labelled lines.
-  if (CAT) {
-    x.font = F(800, 26); x.fillStyle = '#5d6b82'; x.fillText('WHERE IT WENT', L, y - 6);
-    var bx = L, by = y + 14;
-    x.save(); roundRect(x, L, by, IW, 26, 13); x.clip();
-    spend.list.forEach(function (s, i) { var w = i === spend.list.length - 1 ? L + IW - bx : Math.round(s.pct * IW); x.fillStyle = CAT_COLOR[s.key] || '#9aa3ad'; x.fillRect(bx, by, w, 26); bx += w; if (i < spend.list.length - 1) { x.fillStyle = '#fff'; x.fillRect(bx - 2, by, 4, 26); } });
-    x.restore();
-    spend.list.forEach(function (s, i) {
-      var cx = L + (i % 2) * (IW / 2), cy = by + 78 + Math.floor(i / 2) * 50, cat = Wrapped.byKey[s.key];
-      x.fillStyle = CAT_COLOR[s.key] || '#9aa3ad'; x.beginPath(); x.arc(cx + 11, cy - 9, 11, 0, 7); x.fill();
-      x.font = F(900, 28); x.fillStyle = '#14213d'; var lab = (cat ? cat.icon + ' ' + CAT_SHORT[s.key] : '➕ Others'); x.fillText(lab, cx + 32, cy);
-      var lw = x.measureText(lab + '  ').width; x.font = F(700, 24); x.fillStyle = '#5d6b82';
-      x.fillText(fitLines(x, fmt(s.rm).replace('.00', '') + ' · ' + Math.round(s.pct * 100) + '%', IW / 2 - 40 - lw, 1)[0], cx + 32 + lw, cy);
-    });
-    y += CAT;
-  }
-  // Friends.
-  var show = t.members.slice(0, 6), ax = L;
-  show.forEach(function (m) {
-    x.fillStyle = 'hsl(' + hue(m.id) + ' 55% 45%)'; x.beginPath(); x.arc(ax + 40, y + 40, 40, 0, 7); x.fill();
-    x.strokeStyle = '#fff'; x.lineWidth = 6; x.stroke();
-    x.font = F(900, 36); x.fillStyle = '#fff'; x.textAlign = 'center'; x.fillText((m.name.trim().charAt(0) || '?').toUpperCase(), ax + 40, y + 53);
-    x.font = F(700, 22); x.fillStyle = '#14213d'; x.fillText(fitLines(x, m.name, 112, 1)[0], ax + 40, y + 114); x.textAlign = 'left';
-    ax += 126;
-  });
-  if (n > show.length) { x.font = F(900, 32); x.fillStyle = '#5d6b82'; x.fillText('+' + (n - show.length), ax + 6, y + 52); }
-  // Budget, if there is one.
-  var b = t.budget;
-  if (b) {
-    var used = b.per === 'person' ? (n ? total / n : 0) / b.amount : total / b.amount, by = y + 160;
-    x.font = F(800, 26); x.fillStyle = '#5d6b82'; x.fillText('Budget ' + fmt(b.amount) + (b.per === 'person' ? ' each' : '') + ' · ' + Math.round(used * 100) + '% used', L, by);
-    roundRect(x, L, by + 18, IW, 18, 9); x.fillStyle = '#e8eef7'; x.fill();
-    roundRect(x, L, by + 18, Math.max(18, Math.min(1, used) * IW), 18, 9); x.fillStyle = used > 1 ? '#d6334a' : used >= 0.8 ? '#ff7a45' : '#16a37a'; x.fill();
-  }
-  // Tear line and footer.
-  var fy = PY + PH - 120;
-  x.fillStyle = '#56b4f5'; [PX, PX + PW].forEach(function (cx) { x.beginPath(); x.arc(cx, fy, 26, 0, 7); x.fill(); });
-  x.strokeStyle = '#d5dde8'; x.lineWidth = 4; x.setLineDash([14, 14]); x.beginPath(); x.moveTo(PX + 40, fy); x.lineTo(PX + PW - 40, fy); x.stroke(); x.setLineDash([]);
-  x.font = F(800, 28); x.fillStyle = '#5d6b82'; x.fillText('Split with Bei Cin Lah', L, fy + 66);
-  x.font = F(900, 28); x.fillStyle = '#2f80ed'; x.fillText(location.host, L, fy + 102);
-  // Stamp, in the footer beside the link.
-  x.save(); x.translate(PX + PW - 175, fy + 66); x.rotate(-0.12);
-  var sc = settled ? '#16a37a' : '#ff7a45'; x.fillStyle = '#fff'; roundRect(x, -135, -46, 270, 92, 20); x.fill(); x.strokeStyle = sc; x.lineWidth = 6; x.stroke();
-  x.fillStyle = sc; x.textAlign = 'center'; x.font = F(900, settled ? 34 : 31); x.fillText(settled ? 'ALL SETTLED' : 'SETTLING UP', 0, 0);
-  x.font = F(800, 20); x.fillText(settled ? 'no hutang 🎉' : 'almost there 💸', 0, 30); x.restore();
-  return new Promise(function (ok) { c.toBlob(function (bl) { ok(bl); }, 'image/png'); });
-}
 /* ---------- Wrapped ----------
  * A month of this person's spending with friends (bills and trip expenses: food, transport, hotels, shopping...) as one
  * story-sized picture (1080 x 1920), like Spotify Wrapped. Worked out from the bills and trips on this phone
@@ -894,54 +853,171 @@ function wrappedHomeHtml() {
   return '<div class="wrapbar"><button class="wb-main" data-act="' + (share ? 'wrapshare' : 'wrapped') + '" data-ym="' + ym + '"><span class="wb-icon" aria-hidden="true">🎉</span><span class="wb-text"><b>' + MONTHS_FULL[+ym.slice(5, 7) - 1] + ' Wrapped' + (soFar ? ' so far' : '') + '</b><span>' + (share ? 'Tap to share 📸' : 'Your month in one picture') + '</span></span></button>' +
     '<button class="wb-prev" data-act="wrapped" data-ym="' + ym + '">' + (share ? 'Preview' : 'Open') + '</button></div>';
 }
-async function wrappedCard(s) {
-  try { await Promise.all(['900 120px Nunito', '800 40px Nunito', '700 30px Nunito'].map(function (f) { return document.fonts.load(f); })); } catch (e) {}
-  var W = 1080, H = 1920, c = document.createElement('canvas'); c.width = W; c.height = H;
-  var x = c.getContext('2d'), F = function (wt, px) { return wt + ' ' + px + 'px Nunito, system-ui, sans-serif'; }, L = 80, IW = W - 160;
-  var g = x.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#ff7a45'); g.addColorStop(0.45, '#ff4f7b'); g.addColorStop(1, '#5b3df5');
+async function tripCard(t) {
+  try { await Promise.all(['900 64px Nunito', '800 32px Nunito', '700 28px Nunito'].map(function (f) { return document.fonts.load(f); })); } catch (e) {}
+  var spend = tripSpend(t), CAT = spend.total > 0 ? (spend.list.length > 2 ? 175 : 125) : 0;
+  var W = 1080, H = 1430 + CAT, c = document.createElement('canvas'); c.width = W; c.height = H;
+  var x = c.getContext('2d'), F = function (wt, px) { return wt + ' ' + px + 'px Nunito, system-ui, sans-serif'; };
+  var bal = Settle.balances(t), total = Settle.total(t), n = t.members.length, settled = t.expenses.length && !Settle.transfers(bal).length;
+  // Sky to sunset, with a few soft suns.
+  var g = x.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#2563eb'); g.addColorStop(0.42, '#38a3f5'); g.addColorStop(0.74, '#ff9d7a'); g.addColorStop(1, '#ff6f61');
   x.fillStyle = g; x.fillRect(0, 0, W, H);
-  // Big soft shapes, Wrapped style.
-  [[980, 260, 260, '#ffc93c', 0.9], [60, 1060, 220, '#2f80ed', 0.45], [1000, 1500, 320, '#16a37a', 0.35], [180, 1840, 160, '#ffc93c', 0.5]].forEach(function (b) { x.globalAlpha = b[4]; x.fillStyle = b[3]; x.beginPath(); x.arc(b[0], b[1], b[2], 0, 7); x.fill(); });
-  x.globalAlpha = 1; x.textBaseline = 'alphabetic';
-  x.font = F(900, 46); x.fillStyle = '#fff'; x.fillText('Bei ', L, 140); var bw = x.measureText('Bei ').width; x.fillStyle = '#ffc93c'; x.fillText('Cin', L + bw, 140); var cw = x.measureText('Cin ').width; x.fillStyle = '#fff'; x.fillText('Lah', L + bw + cw, 140);
-  x.font = F(900, 30); var pw = x.measureText('WRAPPED').width + 60;
-  roundRect(x, L, 178, pw, 62, 31); x.fillStyle = '#14213d'; x.fill(); x.fillStyle = '#ffc93c'; x.fillText('WRAPPED', L + 30, 220);
-  x.font = F(900, 56); x.fillStyle = '#fff'; x.fillText(ymName(s.month) + (s.month === thisMonth() ? ' (so far)' : ''), L, 320);
-  // The headline.
-  var y = 470;
-  x.font = F(800, 44); x.fillStyle = 'rgba(255,255,255,.9)';
-  if (s.fronted) {
-    x.fillText('You fronted', L, y); y += 150;
-    x.font = F(900, 150); x.fillStyle = '#fff'; x.fillText(fitLines(x, fmt(s.fronted), IW, 1)[0], L, y); y += 70;
-    x.font = F(800, 44); x.fillStyle = 'rgba(255,255,255,.9)'; x.fillText('paying for the group this month', L, y); y += 56;
-    x.font = F(700, 32); x.fillStyle = 'rgba(255,255,255,.8)'; x.fillText(fitLines(x, fmt(s.frontedFor) + ' of it was friends\' share · you paid ' + s.paidCount + (s.paidCount === 1 ? ' time' : ' times'), IW, 1)[0], L, y);
-  } else {
-    x.fillText('You spent', L, y); y += 150;
-    x.font = F(900, 150); x.fillStyle = '#fff'; x.fillText(fitLines(x, fmt(s.spent), IW, 1)[0], L, y); y += 70;
-    x.font = F(800, 44); x.fillStyle = 'rgba(255,255,255,.9)'; x.fillText('with friends this month', L, y);
-  }
-  // Four tiles.
-  var tiles = [];
-  if (s.fastest) tiles.push(['FASTEST TO PAY YOU BACK', '⚡ ' + s.fastest.name, 'avg. ' + Wrapped.took(s.fastest.avg), '#14213d', '#ffc93c']);
-  // Where the money went; for food, which cuisine too ("Food & drinks · mostly Mamak").
-  if (s.category) tiles.push(['WHERE YOUR MONEY WENT', s.category.icon + ' ' + (s.category.name === 'Other' ? 'A bit of everything' : s.category.name),
-    s.category.pct + '% of your spending' + (s.category.name === 'Food & drinks' && s.cuisine ? ' · mostly ' + s.cuisine.name + ' ' + (CUISINE_ICON[s.cuisine.name] || '') : ''), '#fff', '#ff4f7b']);
-  if (s.buddy) tiles.push(['SPENT MOST WITH', '🤝 ' + s.buddy.name, s.buddy.times + (s.buddy.times === 1 ? ' time' : ' times') + ' together', '#fff', '#5b3df5']);
-  if (s.dish) tiles.push(['FAVOURITE ORDER', '😋 ' + s.dish.name, 'ordered ' + s.dish.times + ' times', '#14213d', '#16a37a']);
-  else if (s.biggest) tiles.push(['BIGGEST SPEND', '🥳 ' + s.biggest.title, fmt(s.biggest.total) + (s.biggest.trip ? ' · ' + s.biggest.trip : ''), '#14213d', '#16a37a']);
-  var ty = 860, th = 196, gap = 26;
-  tiles.slice(0, 4).forEach(function (tl, i) {
-    var yy = ty + i * (th + gap);
-    roundRect(x, L, yy, IW, th, 34); x.fillStyle = tl[3]; x.fill();
-    x.font = F(900, 26); x.fillStyle = tl[4]; x.fillText(tl[0], L + 44, yy + 56);
-    x.font = F(900, 54); x.fillStyle = tl[3] === '#fff' ? '#14213d' : '#fff'; x.fillText(fitLines(x, tl[1], IW - 88, 1)[0], L + 44, yy + 124);
-    x.font = F(700, 30); x.fillStyle = tl[3] === '#fff' ? '#5d6b82' : 'rgba(255,255,255,.8)'; x.fillText(fitLines(x, tl[2], IW - 88, 1)[0], L + 44, yy + 168);
+  // The sun, with its glow.
+  var sun = x.createRadialGradient(915, 150, 40, 915, 150, 320); sun.addColorStop(0, 'rgba(255,214,102,.75)'); sun.addColorStop(1, 'rgba(255,214,102,0)');
+  x.fillStyle = sun; x.fillRect(560, 0, W - 560, 480);
+  x.fillStyle = '#ffd24d'; x.beginPath(); x.arc(915, 150, 104, 0, 7); x.fill();
+  // Puffy clouds and low hills.
+  var puff = function (cx, cy, s, a) { x.fillStyle = 'rgba(255,255,255,' + a + ')'; x.beginPath(); [[0, 0, 44], [50, -20, 58], [112, -4, 48], [160, 8, 32]].forEach(function (p) { x.moveTo(cx + (p[0] + p[2]) * s, cy + p[1] * s); x.arc(cx + p[0] * s, cy + p[1] * s, p[2] * s, 0, 7); }); x.rect(cx - 10 * s, cy, 170 * s, 30 * s); x.fill('nonzero'); };
+  puff(700, 232, 0.8, 0.82); puff(30, 262, 0.62, 0.5);
+  x.fillStyle = 'rgba(20,33,61,.16)'; x.beginPath(); x.moveTo(0, H); x.lineTo(0, H - 90); x.quadraticCurveTo(300, H - 210, 620, H - 96); x.quadraticCurveTo(860, H - 26, W, H - 130); x.lineTo(W, H); x.closePath(); x.fill();
+  // The notches in the pass show the sky behind them.
+  var hole = 'rgb(' + Array.prototype.slice.call(x.getImageData(20, H - 180, 1, 1).data, 0, 3).join(',') + ')';
+  // Dotted flight path.
+  x.strokeStyle = 'rgba(255,255,255,.55)'; x.lineWidth = 6; x.setLineDash([2, 20]); x.lineCap = 'round';
+  x.beginPath(); x.moveTo(70, 246); x.bezierCurveTo(300, 170, 560, 280, 760, 196); x.stroke(); x.setLineDash([]);
+  x.textBaseline = 'alphabetic';
+  try {
+    var svg = Cute.svg('trip').replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ').replace('width="40" height="40"', 'width="320" height="320"');
+    var img = new Image(); img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    await img.decode(); x.save(); x.translate(838, 182); x.rotate(-0.1); x.drawImage(img, -86, -86, 172, 172); x.restore();
+  } catch (e) {}
+  // Brand.
+  x.font = F(900, 64); x.fillStyle = '#fff'; x.fillText('Bei ', 80, 130); var bw = x.measureText('Bei ').width;
+  x.fillStyle = '#ffc93c'; x.fillText('Cin', 80 + bw, 130); var cw = x.measureText('Cin ').width;
+  x.fillStyle = '#fff'; x.fillText('Lah', 80 + bw + cw, 130);
+  x.font = F(800, 28); x.fillStyle = 'rgba(255,255,255,.85)'; x.fillText('MAKAN-MAKAN, JALAN-JALAN', 82, 178);
+  // The pass.
+  var PX = 70, PY = 280, PW = W - 140, PH = 1090 + CAT;
+  x.save(); x.shadowColor = 'rgba(20,33,61,.28)'; x.shadowBlur = 40; x.shadowOffsetY = 18; roundRect(x, PX, PY, PW, PH, 44); x.fillStyle = '#fff'; x.fill(); x.restore();
+  var band = x.createLinearGradient(PX, 0, PX + PW, 0); band.addColorStop(0, '#ff5a5f'); band.addColorStop(1, '#ff9a3d');
+  roundRect(x, PX, PY, PW, 92, 44); x.fillStyle = band; x.fill(); x.fillRect(PX, PY + 50, PW, 42);
+  x.font = F(900, 32); x.fillStyle = '#fff'; x.fillText('✈  TRIP PASS', PX + 50, PY + 58);
+  x.textAlign = 'right'; x.fillText('SEDAP ✓', PX + PW - 50, PY + 58); x.textAlign = 'left';
+  var L = PX + 56, IW = PW - 112, y = PY + 178;
+  x.fillStyle = '#14213d'; x.font = F(900, 66);
+  var tl = fitLines(x, t.title, IW, 2); tl.forEach(function (l) { x.fillText(l, L, y); y += 76; });
+  x.font = F(700, 32); x.fillStyle = '#5d6b82'; x.fillText(tripDates(t), L, y - 18); y += 52;
+  // Total.
+  x.font = F(800, 28); x.fillStyle = '#5d6b82'; x.fillText('SPENT TOGETHER', L, y); y += 102;
+  x.font = F(900, 112); var tg = x.createLinearGradient(L, 0, L + 720, 0); tg.addColorStop(0, '#ff5a5f'); tg.addColorStop(1, '#ff8a2a'); x.fillStyle = tg; x.fillText(fitLines(x, fmt(total), IW, 1)[0], L, y); y += 40;
+  // Three small stats.
+  var stats = [[n + (n === 1 ? ' friend' : ' friends'), 'on the trip'], [t.expenses.length + (t.expenses.length === 1 ? ' expense' : ' expenses'), 'added'], [n ? fmt(Math.round(total / n)) : fmt(0), 'each, on average']];
+  var sg = 14, sw = (IW - 2 * sg) / 3, tint = ['#e8f1fd', '#fff1e6', '#e6f8f2'], ink = ['#2563eb', '#e8590c', '#0f8a68'];
+  stats.forEach(function (s, i) {
+    var sx = L + i * (sw + sg); roundRect(x, sx, y - 6, sw, 112, 22); x.fillStyle = tint[i]; x.fill();
+    var px = 36; do { x.font = F(900, px); px -= 2; } while (x.measureText(s[0]).width > sw - 32 && px > 22);
+    x.fillStyle = ink[i]; x.fillText(s[0], sx + 16, y + 46); x.font = F(700, 24); x.fillStyle = '#5d6b82'; x.fillText(fitLines(x, s[1], sw - 32, 1)[0], sx + 16, y + 84);
   });
-  // Footer.
-  var fy = H - 150;
-  x.font = F(800, 34); x.fillStyle = '#fff'; x.fillText(fitLines(x, s.count + (s.count === 1 ? ' thing' : ' things') + ' split with friends' + (s.busiestDay ? ' · busiest on ' + s.busiestDay + 's' : ''), IW, 1)[0], L, fy);
-  x.font = F(900, 34); x.fillStyle = '#ffc93c'; x.fillText('Make yours at ' + location.host, L, fy + 56);
+  y += 158;
+  // Where it went: one bar split by category, then up to four labelled lines.
+  if (CAT) {
+    x.font = F(800, 26); x.fillStyle = '#5d6b82'; x.fillText('WHERE IT WENT', L, y - 6);
+    var bx = L, by = y + 14;
+    x.save(); roundRect(x, L, by, IW, 26, 13); x.clip();
+    spend.list.forEach(function (s, i) { var w = i === spend.list.length - 1 ? L + IW - bx : Math.round(s.pct * IW); x.fillStyle = CAT_COLOR[s.key] || '#9aa3ad'; x.fillRect(bx, by, w, 26); bx += w; if (i < spend.list.length - 1) { x.fillStyle = '#fff'; x.fillRect(bx - 2, by, 4, 26); } });
+    x.restore();
+    spend.list.forEach(function (s, i) {
+      var cx = L + (i % 2) * (IW / 2), cy = by + 78 + Math.floor(i / 2) * 50, cat = Wrapped.byKey[s.key];
+      x.fillStyle = CAT_COLOR[s.key] || '#9aa3ad'; x.beginPath(); x.arc(cx + 11, cy - 9, 11, 0, 7); x.fill();
+      x.font = F(900, 28); x.fillStyle = '#14213d'; var lab = (cat ? cat.icon + ' ' + CAT_SHORT[s.key] : '➕ Others'); x.fillText(lab, cx + 32, cy);
+      var lw = x.measureText(lab + '  ').width; x.font = F(700, 24); x.fillStyle = '#5d6b82';
+      x.fillText(fitLines(x, fmt(s.rm).replace('.00', '') + ' · ' + Math.round(s.pct * 100) + '%', IW / 2 - 40 - lw, 1)[0], cx + 32 + lw, cy);
+    });
+    y += CAT;
+  }
+  // Friends.
+  var show = t.members.slice(0, 6), ax = L;
+  show.forEach(function (m) {
+    x.fillStyle = 'hsl(' + hue(m.id) + ' 55% 45%)'; x.beginPath(); x.arc(ax + 40, y + 40, 40, 0, 7); x.fill();
+    x.strokeStyle = '#fff'; x.lineWidth = 7; x.stroke();
+    x.font = F(900, 36); x.fillStyle = '#fff'; x.textAlign = 'center'; x.fillText((m.name.trim().charAt(0) || '?').toUpperCase(), ax + 40, y + 53);
+    x.font = F(700, 22); x.fillStyle = '#14213d'; x.fillText(fitLines(x, m.name, 112, 1)[0], ax + 40, y + 114); x.textAlign = 'left';
+    ax += 126;
+  });
+  if (n > show.length) { x.font = F(900, 32); x.fillStyle = '#5d6b82'; x.fillText('+' + (n - show.length), ax + 6, y + 52); }
+  // Budget, if there is one.
+  var b = t.budget;
+  if (b) {
+    var used = b.per === 'person' ? (n ? total / n : 0) / b.amount : total / b.amount, by = y + 160;
+    x.font = F(800, 26); x.fillStyle = '#5d6b82'; x.fillText('Budget ' + fmt(b.amount) + (b.per === 'person' ? ' each' : '') + ' · ' + Math.round(used * 100) + '% used', L, by);
+    roundRect(x, L, by + 18, IW, 18, 9); x.fillStyle = '#e8eef7'; x.fill();
+    roundRect(x, L, by + 18, Math.max(18, Math.min(1, used) * IW), 18, 9); x.fillStyle = used > 1 ? '#d6334a' : used >= 0.8 ? '#ff7a45' : '#16a37a'; x.fill();
+  }
+  // Tear line and footer.
+  var fy = PY + PH - 120;
+  x.fillStyle = hole; [PX, PX + PW].forEach(function (cx) { x.beginPath(); x.arc(cx, fy, 26, 0, 7); x.fill(); });
+  x.strokeStyle = '#d5dde8'; x.lineWidth = 4; x.setLineDash([14, 14]); x.beginPath(); x.moveTo(PX + 40, fy); x.lineTo(PX + PW - 40, fy); x.stroke(); x.setLineDash([]);
+  x.font = F(800, 28); x.fillStyle = '#5d6b82'; x.fillText('Split with Bei Cin Lah', L, fy + 66);
+  x.font = F(900, 28); x.fillStyle = '#2f80ed'; x.fillText(location.host, L, fy + 102);
+  // Stamp, in the footer beside the link.
+  x.save(); x.translate(PX + PW - 175, fy + 58); x.rotate(-0.1);
+  var sc = settled ? '#16a37a' : '#ff7a45'; x.fillStyle = '#fff'; roundRect(x, -138, -50, 276, 100, 22); x.fill(); x.strokeStyle = sc; x.lineWidth = 7; x.stroke(); roundRect(x, -127, -39, 254, 78, 14); x.lineWidth = 2; x.stroke();
+  x.fillStyle = sc; x.textAlign = 'center'; x.font = F(900, settled ? 34 : 31); x.fillText(settled ? 'ALL SETTLED' : 'SETTLING UP', 0, -2);
+  x.font = F(800, 19); x.fillText(settled ? 'no hutang 🎉' : 'almost there 💸', 0, 26); x.restore();
   return new Promise(function (ok) { c.toBlob(function (bl) { ok(bl); }, 'image/png'); });
+}
+// The story poster for Wrapped: a big title, the mascot and a ticket of stats. Everything that matters stays
+// between y 230 and 1660, because Instagram stories cover the top and bottom. No money on it: a story is public.
+// o: { tag, title, bg, ray, mascot, stats: [[label, value] x 4], line, seed }
+async function poster(o) {
+  try { await Promise.all(['900 120px Nunito', '800 40px Nunito', '700 30px Nunito'].map(function (f) { return document.fonts.load(f); })); } catch (e) {}
+  var W = 1080, H = 1920, INK = '#14213d', c = document.createElement('canvas'); c.width = W; c.height = H;
+  var x = c.getContext('2d'), F = function (wt, px) { return wt + ' ' + px + 'px Nunito, system-ui, sans-serif'; }, mid = W / 2;
+  x.fillStyle = o.bg; x.fillRect(0, 0, W, H);
+  // Sunburst behind the mascot.
+  x.fillStyle = o.ray;
+  for (var r = 0; r < 18; r++) { var a = r * Math.PI / 9; x.beginPath(); x.moveTo(mid, 790); x.arc(mid, 790, 1500, a, a + Math.PI / 18); x.closePath(); x.fill(); }
+  x.textBaseline = 'alphabetic'; x.textAlign = 'center';
+  // Which month.
+  var tag = o.tag.toUpperCase();
+  x.font = F(900, 34); var tw = x.measureText(tag).width + 72;
+  roundRect(x, mid - tw / 2, 232, tw, 72, 36); x.fillStyle = INK; x.fill(); x.fillStyle = '#fff'; x.fillText(tag, mid, 280);
+  // The title, as big as fits on one or two lines.
+  var words = o.title.toUpperCase(), size = 148, lines;
+  do { x.font = F(900, size); lines = fitLines(x, words, W - 120, 2); size -= 6; } while (lines.join(' ').length < words.length && size > 70);
+  x.fillStyle = INK;
+  var ty = lines.length > 1 ? 415 : 500;
+  lines.forEach(function (l, i) { x.fillText(l, mid, ty + i * (size + 6)); });
+  // The mascot on a white sticker.
+  x.beginPath(); x.arc(mid, 815, 200, 0, 7); x.fillStyle = '#fff'; x.fill(); x.lineWidth = 10; x.strokeStyle = INK; x.stroke();
+  try {
+    var svg = Cute.svg(o.mascot).replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ').replace('width="40" height="40"', 'width="680" height="680"');
+    var img = new Image(); img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    await img.decode(); x.drawImage(img, mid - 160, 655, 320, 320);
+  } catch (e) {}
+  // The ticket.
+  var L = 72, T = 1058, TW = W - 144, TH = 590, cut = T + 392;
+  roundRect(x, L + 14, T + 16, TW, TH, 40); x.fillStyle = INK; x.fill();
+  roundRect(x, L, T, TW, TH, 40); x.fillStyle = '#fff'; x.fill(); x.lineWidth = 7; x.strokeStyle = INK; x.stroke();
+  x.textAlign = 'left';
+  x.font = F(900, 30); x.fillStyle = '#ff5a3c'; x.fillText('BEI CIN LAH', L + 50, T + 66);
+  x.textAlign = 'right'; x.fillStyle = '#5d6b82'; x.fillText('MAKAN PASS', L + TW - 50, T + 66); x.textAlign = 'left';
+  o.stats.slice(0, 4).forEach(function (t, i) {
+    var sx = L + 50 + (i % 2) * (TW / 2 - 16), sy = T + 142 + (i >> 1) * 124, w = TW / 2 - 76;
+    x.font = F(800, 24); x.fillStyle = '#5d6b82'; x.fillText(t[0], sx, sy);
+    var px = 50; do { x.font = F(900, px); px -= 2; } while (x.measureText(t[1]).width > w && px > 26);
+    x.fillStyle = INK; x.fillText(fitLines(x, t[1], w, 1)[0], sx, sy + 58);
+  });
+  // The tear line: two notches and a dashed cut.
+  [L, L + TW].forEach(function (nx) { x.beginPath(); x.arc(nx, cut, 26, 0, 7); x.fillStyle = o.bg; x.fill(); x.lineWidth = 7; x.strokeStyle = INK; x.stroke(); });
+  x.setLineDash([18, 14]); x.lineWidth = 5; x.strokeStyle = '#c9d3e2'; x.beginPath(); x.moveTo(L + 46, cut); x.lineTo(L + TW - 46, cut); x.stroke(); x.setLineDash([]);
+  x.font = F(800, 34); x.fillStyle = INK; x.fillText(fitLines(x, o.line, TW - 300, 1)[0], L + 50, cut + 78);
+  x.font = F(900, 32); x.fillStyle = '#ff5a3c'; x.fillText(location.host, L + 50, cut + 134);
+  // A little barcode.
+  var bx = L + TW - 210, seed = o.seed;
+  x.fillStyle = INK;
+  for (var b = 0; b < 26; b++) { var bw = 2 + ((seed + b * b * 5) % 4) * 2; if (bx + bw > L + TW - 48) break; x.fillRect(bx, cut + 44, bw, 104); bx += bw + 3; }
+  return new Promise(function (ok) { c.toBlob(function (bl) { ok(bl); }, 'image/png'); });
+}
+// Four stats for the ticket, topped up so the grid is always full.
+function ticketStats(stats, spare) { while (stats.length < 4) stats.push(spare.shift() || ['GOOD VIBES', '100%']); return stats; }
+function wrappedCard(s) {
+  var me = Wrapped.persona(s), stats = [['SPLIT WITH FRIENDS', s.count + (s.count === 1 ? ' time' : ' times')]], big = s.busiestDay ? [['BIG DAY', s.busiestDay + 's']] : [];
+  if (s.buddy) stats.push(['MAKAN BUDDY', s.buddy.name]);
+  if (s.dish) stats.push(['ON REPEAT', s.dish.name]); else if (s.cuisine) stats.push(['ON REPEAT', s.cuisine.name + ' food']);
+  if (s.fastest) stats.push(['FASTEST PAYER', s.fastest.name]);
+  return poster({ tag: MONTHS_FULL[+s.month.slice(5, 7) - 1] + ' Wrapped' + (s.month === thisMonth() ? ' so far' : ''), title: me.title, bg: me.bg, ray: me.ray, mascot: me.mascot,
+    stats: ticketStats(stats, big), line: me.line, seed: s.count * 7 + (+s.month.slice(5, 7)) * 13 });
 }
 // Phones that can hand a picture to other apps (Instagram, WhatsApp...) through the share sheet.
 function canShareFiles() { try { return !!(navigator.canShare && navigator.canShare({ files: [new File([new Blob(['x'], { type: 'image/png' })], 'x.png', { type: 'image/png' })] })); } catch (e) { return false; } }
@@ -973,7 +1049,7 @@ async function showWrapped(ym) {
   var i = ms.indexOf(ym), older = ms[i + 1], newer = ms[i - 1];
   var canShare = !!(navigator.canShare && navigator.canShare({ files: [new File([blob], S.card.name, { type: 'image/png' })] }));
   S.modal = { title: ymName(ym) + ' Wrapped', src: URL.createObjectURL(blob),
-    html: '<p class="small muted" style="margin:0">Made from the bills and trips on this phone. Shows two friends\' names (fastest to pay back, and who you spent most with); nothing about who owes what.</p>',
+    html: '<p class="small muted" style="margin:0">Made from the bills and trips on this phone. Shows up to two friends\' names and your favourites. No amounts, and nothing about who owes what.</p>',
     acts: (canShare ? '<button class="btn primary" data-act="cardshare">Share</button>' : '') + '<button class="btn' + (canShare ? '' : ' primary') + '" data-act="cardsave">Save picture</button>' +
       (older ? '<button class="btn small" data-act="wrapped" data-ym="' + older + '">‹ ' + MONTHS_FULL[+older.slice(5, 7) - 1] + '</button>' : '') +
       (newer ? '<button class="btn small" data-act="wrapped" data-ym="' + newer + '">' + MONTHS_FULL[+newer.slice(5, 7) - 1] + ' ›</button>' : '') };
@@ -1182,7 +1258,9 @@ async function saveExpense() {
 async function scanExpense(f) {
   var d = S.edraft; d.scanning = true; d.scanNote = ''; render();
   try {
-    var r = await readOnPhone(f, d.currency), sum = r.service + r.sst + r.rounding, switched = abroadFrom(d, r);
+    var r = await readOnPhone(f, d.currency);
+    stopIfUnsure(r);
+    var sum = r.service + r.sst + r.rounding, switched = abroadFrom(d, r) || unsureNote(r);
     r.items.forEach(function (i) { sum += i.line; });
     var total = r.total || sum;
     if (!total) throw new Error('empty');
@@ -1197,7 +1275,7 @@ async function scanExpense(f) {
       var gap = r.total ? r.total - edTotal(d) : 0;
       d.scanNote = switched + 'Read ' + r.items.length + ' item' + (r.items.length > 1 ? 's' : '') + (r.merchant ? ' at ' + r.merchant : '') + (Math.abs(gap) > 1 ? '. They come to ' + fmt(edTotal(d)) + ' but the receipt says ' + fmt(r.total) + ', so check the items.' : ', matching the total of ' + fmt(edTotal(d)) + '.') + ' Please check them against the receipt.';
     } else d.scanNote = switched + 'Read a total of ' + fmt(total) + (r.merchant ? ' at ' + r.merchant : '') + '. Please check it against the receipt.';
-  } catch (e) { d.scanNote = 'Could not read the total. Type it in.'; }
+  } catch (e) { d.scanNote = e.note || 'Could not read the total. Type it in.'; }
   d.scanning = false; render();
 }
 function joinTrip(body) {
@@ -1448,13 +1526,18 @@ function saveSummary() {
 /* ---------- receipt reading ----------
  * Free and on the phone with Tesseract.js (served from /ocr, loaded on first use, language file cached by the browser).
  * If the server's Claude reader is switched on it is tried first, and the phone takes over if it fails. */
-var ocr = null, ocrTry = '', ocrTexts = [];
+var ocr = null, ocrLang = '', ocrTry = '', ocrTexts = [];
+// Yen, won and yuan receipts are read with their own language as well (public/ocr, fetched the first time it is needed).
+var OCR_LANGS = { JPY: 'jpn+eng', KRW: 'kor+eng', CNY: 'chi_sim+eng', TWD: 'chi_tra+eng', HKD: 'chi_tra+eng' };
 function loadScript(src) { return new Promise(function (ok, no) { var s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); }); }
 function scanLabel(t) { var b = document.querySelector('[data-act="scan"]'); if (b) b.textContent = t; }
-function ocrWorker() {
+function ocrWorker(lang) {
+  lang = lang || 'eng';
+  if (ocr && ocrLang !== lang) { ocr.then(function (w) { return w.terminate(); }).catch(function () {}); ocr = null; }
+  ocrLang = lang;
   if (!ocr) ocr = (async function () {
     if (!window.Tesseract) await loadScript('/ocr/tesseract.min.js');
-    var w = await window.Tesseract.createWorker('eng', 1, { workerPath: '/ocr/worker.min.js', corePath: '/ocr', langPath: '/ocr', workerBlobURL: false, gzip: true,
+    var w = await window.Tesseract.createWorker(lang, 1, { workerPath: '/ocr/worker.min.js', corePath: '/ocr', langPath: '/ocr', workerBlobURL: false, gzip: true,
       logger: function (m) { scanLabel(m.status === 'recognizing text' ? 'Reading' + ocrTry + '… ' + Math.round(m.progress * 100) + '%' : 'Getting ready…'); } });
     await w.setParameters({ preserve_interword_spaces: '1' });
     return w;
@@ -1480,8 +1563,24 @@ function blackWhite(c) {
 }
 // `currency`: the bill's currency if already chosen (prices in dong or yen have no cents).
 async function readOnPhone(file, currency) {
+  var r = await readTries(file, currency), lang = OCR_LANGS[currency] || OCR_LANGS[r.currency];
+  if (!lang || !ocrTexts.length) return r;
+  // The shop name most of the tries agree on.
+  var seen = {}, shop = '';
+  ocrTexts.forEach(function (t) { var s = window.ReceiptParse.cjkShop(t); if (s && (seen[s] = (seen[s] || 0) + 1) > (seen[shop] || 0)) shop = s; });
+  if (shop) r.merchant = shop;
+  // One more read in the local language alone, for the dish names; the prices and total must stay exactly the same.
+  try {
+    var P = window.ReceiptParse, w = await ocrWorker(lang.split('+')[0]), o = { currency: r.currency }, c = photoCanvas(await createImageBitmap(file), 0);
+    await w.setParameters({ tessedit_pageseg_mode: '6' });
+    var named = P.parse(P.mergeNames(ocrTexts[0], (await w.recognize(c)).data.text), o);
+    if (named.total === r.total && named.items.length === r.items.length && named.items.every(function (i, k) { return i.line === r.items[k].line; })) { named.date = r.date; named.merchant = r.merchant; return named; }
+  } catch (e) {}
+  return r;
+}
+async function readTries(file, currency) {
   var bmp = await createImageBitmap(file), c = photoCanvas(bmp, 0);
-  var P = window.ReceiptParse, w = await ocrWorker(), r = null, n = 0;
+  var P = window.ReceiptParse, lang = OCR_LANGS[currency], w = await ocrWorker(lang), r = null, n = 0;
   ocrTexts = [];
   // Each try is read twice, from the text as Tesseract lines it up and from word positions; the reading that adds up best wins.
   var read = async function (canvas, psm) {
@@ -1496,7 +1595,17 @@ async function readOnPhone(file, currency) {
   try {
     // First the photo as taken, in layout mode 6 (one block of text), which usually keeps a dish and its price together.
     var first = await read(c, '6');
+    // Yen, won or yuan found by the English reader: read it again in that language, for the dish names.
+    if (!lang && OCR_LANGS[r.currency]) return await readTries(file, r.currency);
     if (P.goodEnough(r)) return r;
+    // No sign of any currency and the English reader is lost: a Chinese receipt without ¥ or 元 looks just like this.
+    if (!lang && !P.detectCurrency(first.text)) {
+      w = await ocrWorker('chi_sim+eng');
+      await w.setParameters({ tessedit_pageseg_mode: '6' });
+      var zh = (await w.recognize(c)).data.text.match(/[\u3400-\u9fff]/g);
+      if (zh && zh.length >= 8) return await readTries(file, 'CNY');
+      w = await ocrWorker();
+    }
     // Then straightened if it is tilted more than 2°, and a black-and-white copy that drops shadows and folds,
     // each also in layout mode 4 (one column). It stops as soon as a reading adds up.
     var a = P.tilt(first.blocks), turned = Math.abs(a) > 0.035;
@@ -1602,7 +1711,19 @@ async function confirmMatching(b) {
 function abroadFrom(d, r) {
   if (!r.currency || r.currency === d.currency || (d.currency && d.currency !== 'MYR')) return '';
   d.currency = r.currency; d.rate = ''; d.rateNote = ''; CUR = r.currency; fillRate(d);
-  return 'This receipt is in ' + r.currency + ', so the currency was switched. ';
+  return 'This receipt looks like ' + r.currency + ', so the currency was switched. Change it if that is wrong. ';
+}
+// A receipt that is clearly not in ringgit but does not say which currency: the person has to choose.
+function unsureNote(r) {
+  return r.unsure === 'dollar' ? 'This receipt shows $, so check the Currency box: it is still set to ringgit. ' : '';
+}
+function stopIfUnsure(r) {
+  // No total and under two real lines (a price inside a "name" is lines run together): that is not a reading, and nothing
+  // from it (name, currency) can be trusted.
+  if (!r.total && r.items.filter(function (i) { return !/\d[.,]\d/.test(i.name); }).length < 2) throw new Error('empty');
+  if (r.unsure !== 'whole') return;
+  var e = new Error('unsure'); e.note = 'These prices look like yen, won, dong or rupiah. Choose the currency first, then read the receipt again.';
+  throw e;
 }
 // "Didn't read right?": sends the text the phone read (no photo, no names) so the reading rules can be fixed.
 function reportLinkHtml() {
@@ -1637,10 +1758,12 @@ async function doScan() {
     if (S.cfg.scan) { try { r = await api('POST', '/api/scan', { image: b64(await toJpeg(d.scanFile, 1400, 600000)) }); } catch (e) { r = null; } }
     if (!r || !r.items.length) r = await readOnPhone(d.scanFile, d.currency);
     if (ocrTexts.length) S.lastScan = { texts: ocrTexts.slice(), got: { items: r.items.map(function (i) { return { name: i.name, qty: i.qty, line: i.line }; }), total: r.total } };
+    stopIfUnsure(r);
     if (!r.items.length) throw new Error('empty');
-    var switched = abroadFrom(d, r);
-    d.items = r.items.map(function (i) { var it = { name: i.name, qty: String(i.qty), price: fixed(i.each), line: i.line }; if (i.filled) it.guess = 1; return it; });
+    var switched = abroadFrom(d, r) || unsureNote(r);
+    d.items = r.items.map(function (i) { var it = { name: i.name, qty: String(i.qty), price: fixed(i.each), line: i.line, read: 1 }; if (i.filled) it.guess = 1; return it; });
     d.service = r.service ? fixed(r.service) : ''; d.sst = r.sst ? fixed(r.sst) : ''; d.rounding = r.rounding ? fixed(r.rounding) : '';
+    d.wantTotal = r.total ? fixed(r.total) : ''; S.peekOpen = true;
     if (r.merchant && (!d.title || d.title === d.scanTitle)) d.title = d.scanTitle = r.merchant;
     if (r.date) d.date = r.date;
     d.scanTotal = r.total;
@@ -1648,12 +1771,13 @@ async function doScan() {
     // Prices worked out from the receipt's totals (not read directly) are named so the payer can check them.
     var worked = r.filled ? ' ' + (r.filled === 1 ? 'One price was' : r.filled + ' prices were') + ' unreadable and worked out from the receipt total: ' +
       r.items.filter(function (i) { return i.filled; }).map(function (i) { return i.name + ' (' + fmt(i.line) + ')'; }).join(', ') + '.' : '';
-    d.scanNote = switched + (!r.total ? 'Read ' + r.items.length + ' items coming to ' + fmt(draftTotal(d)) + ', but the receipt total could not be read. Please check the items and charges against the receipt.'
+    d.scanNote = switched + (r.onlyTotal ? 'Only the receipt total of ' + fmt(r.total) + ' could be read, so it is one line. Add the dishes if you want people to pick them. Please check it against the receipt.' : !r.total ? 'Read ' + r.items.length + ' items coming to ' + fmt(draftTotal(d)) + ', but the receipt total could not be read. Please check the items and charges against the receipt.'
       : Math.abs(gap) > 1 ? 'Read ' + r.items.length + ' items. They come to ' + fmt(draftTotal(d)) + ' but the receipt says ' + fmt(r.total) + ', so ' + fmt(Math.abs(gap)) + (gap > 0 ? ' is missing or misread' : ' too much was read') + '. Please check the items against the receipt.'
       : 'Read ' + r.items.length + ' items, matching the receipt total of ' + fmt(draftTotal(d)) + '.' + worked + ' Please check them against the receipt.');
   } catch (e) {
-    d.scanNote = e.status === 429 ? 'Too many scans for now. Type the items instead.' : 'Could not read that receipt. Try a clearer, flatter photo, or type the items.';
+    d.scanNote = e.note || (e.status === 429 ? 'Too many scans for now. Type the items instead.' : 'Could not read that receipt. Faint, dotted or small print is too hard for the reader. Try a closer, brighter photo, or type the items.');
     if (!S.lastScan && ocrTexts.length) S.lastScan = { texts: ocrTexts.slice(), got: { items: [], total: 0 } };
+    S.peekOpen = true;
   }
   S.scanning = false; render();
 }
@@ -1779,6 +1903,7 @@ document.addEventListener('click', function (e) {
       queueWrite(function () { return bapi('PUT', '/picks', { memberId: ac, itemIds: arr }).then(function (j) { if (S.busy === 1) setBill(j); }); });
     } break;
     case 'slipbtn': $('#fileSlip').click(); break;
+    case 'nudge': nudgePayer(b); break;
     case 'confirm': case 'unconfirm': case 'markpaid':
       bapi('POST', '/pay', { memberId: uid, action: act }).then(function (j) { setBill(j); render(); if (act !== 'unconfirm') toast('Marked as paid'); }).catch(function (x) { toast(x.message); }); break;
     case 'viewslip': if (b) {
@@ -1818,6 +1943,17 @@ document.addEventListener('click', function (e) {
     case 'forgetqr': keepQr(''); if (S.draft) { S.draft.qr = ''; saveDraft(); } render(); toast('QR removed from this phone.'); break;
     case 'scan': doScan(); break;
     case 'additem': d.items.push({ name: '', qty: '1', price: '' }); render(); break;
+    case 'justtotal':
+      S.modal = { title: 'Just use the total', html: '<p class="small" style="margin:0">Skip the dishes. Everyone ticks one line and it is split equally among them, you included.</p><div class="field"><label for="jt">Total on the receipt (' + CUR + ')</label><input type="number" step="0.01" min="0" inputmode="decimal" id="jt" value="' + esc(wantTotal(d) ? fixed(wantTotal(d)) : '') + '" placeholder="0.00"></div>',
+        acts: '<button class="btn primary" data-act="justtotalok">Use this total</button><button class="btn" data-act="closemodal">Cancel</button>' };
+      paintModal(); break;
+    case 'justtotalok':
+      var whole = toC(($('#jt') || {}).value); if (!(whole > 0)) return toast('Enter the total on the receipt');
+      d.items = [{ name: 'Receipt total', qty: '1', price: fixed(whole) }]; d.service = ''; d.sst = ''; d.rounding = ''; d.wantTotal = fixed(whole);
+      d.scanNote = 'Using the total only. Everyone ticks it and it is split equally among them, you included.';
+      closeModal(); saveDraft(); render(); break;
+    case 'peek': S.peekOpen = !S.peekOpen; S.peekZoom = false; render(); break;
+    case 'peekzoom': S.peekZoom = !S.peekZoom; render(); break;
     case 'rmitem': if (d.items.length > 1) { d.items.splice(+t.getAttribute('data-i'), 1); render(); } break;
     case 'svc10': d.service = fixed(Math.round(draftSum(d) * 0.10)); render(); break;
     case 'sst6': case 'sst8': d.sst = fixed(Math.round((draftSum(d) + toC(d.service)) * (act === 'sst6' ? 0.06 : 0.08))); render(); break;
@@ -1832,7 +1968,7 @@ document.addEventListener('click', function (e) {
     case 'clearsearch': S.q = ''; render(); var qi = $('#q'); if (qi) qi.focus(); break;
     case 'whentoggle': S.whenOpen = !S.whenOpen; render(); break;
     case 'whenclear': S.when = 'all'; S.wFrom = ''; S.wTo = ''; render(); break;
-    case 'when': S.when = t.getAttribute('data-when'); if (S.when !== 'custom') { S.wFrom = ''; S.wTo = ''; } render(); if (S.when === 'custom' && !S.wFrom) { var wf = $('#wfrom'); if (wf) wf.focus(); } break;
+    case 'when': S.when = t.getAttribute('data-when'); if (S.when !== 'custom') { S.wFrom = ''; S.wTo = ''; } else if (!S.wTo) S.wTo = todayMY(); render(); if (S.when === 'custom' && !S.wFrom) { var wf = $('#wfrom'); if (wf) wf.focus(); } break;
     case 'unlinkdev': api('PUT', '/api/sync', Object.assign(mine(), { leave: true }), S.store.sync).catch(function () {}); S.store.sync = ''; S.devices = []; writeStore(); closeModal(); render(); toast('This device is unlinked. Your bills here stay, and stop syncing.'); break;
     case 'revokesync': revokeSync(); break;
     case 'linkconfirm': confirmLink(); break;
@@ -1853,7 +1989,8 @@ document.addEventListener('input', function (e) {
   if (t.hasAttribute('data-f')) d[t.getAttribute('data-f')] = t.value;
   else if (t.hasAttribute('data-i')) {
     var ix = +t.getAttribute('data-i'), it = d.items[ix]; it[t.getAttribute('data-k')] = t.value;
-    if (t.getAttribute('data-k') !== 'name') { delete it.line; delete it.guess; }
+    if (t.getAttribute('data-k') !== 'name') { delete it.line; delete it.guess; } else it.ok = 1;
+    if (!itemUnsure(d, it)) { var rw = t.closest('.irow'); if (rw && rw.classList.contains('unsure')) { rw.classList.remove('unsure'); var nt = rw.previousElementSibling; if (nt && nt.className === 'unsure-note') nt.remove(); } }
     var ce = document.querySelector('[data-line="' + ix + '"]'); if (ce) ce.textContent = fmt(lineCents(it));
   } else return;
   var el = $('#draftTotals'); if (el) el.innerHTML = totalsHtml(d);

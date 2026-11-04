@@ -89,6 +89,14 @@
     return out;
   }
 
+  // What this person spent: their own share of every bill and trip expense dated within `inDates(date)`, in RM.
+  function spentWhere(bills, inDates, meOf, trips, tripMeOf) {
+    return entries(bills, meOf, trips, tripMeOf).reduce(function (sum, x) { return inDates(x.date) ? sum + x.mine : sum; }, 0);
+  }
+  function spent(bills, ym, meOf, trips, tripMeOf) {
+    return spentWhere(bills, function (d) { return d.slice(0, 7) === ym; }, meOf, trips, tripMeOf);
+  }
+
   // The months (newest first) with at least one bill or trip expense this person is part of.
   function months(bills, meOf, trips, tripMeOf) {
     var seen = {}; entries(bills, meOf, trips, tripMeOf).forEach(function (x) { seen[x.month] = 1; });
@@ -133,6 +141,16 @@
     return s;
   }
 
+  // The title on the Wrapped poster, from what the month was mostly about, with its colours and mascot.
+  var FOOD_TITLES = { Mamak: 'Mamak Royalty', Malay: 'Nasi Legend', Chinese: 'Dim Sum Boss', Japanese: 'Sushi Sensei', Korean: 'K-BBQ Idol', Thai: 'Tom Yum Titan', Indian: 'Banana Leaf Boss', Western: 'Burger Baron', 'Café': 'Kopi Connoisseur', 'Fast food': 'Drive-Thru Hero' };
+  var LOOKS = { food: ['Makan Legend', '#ffc93c', '#ffd766'], transport: ['Road Trip Captain', '#74bdff', '#93ccff'], stay: ['Staycation Star', '#b9a5ff', '#c9b9ff'], shopping: ['Shopping Champion', '#ff9dbd', '#ffb4cc'],
+    groceries: ['Grocery Guru', '#8fe0a6', '#a8e8ba'], fun: ['Party Planner', '#ffb057', '#ffc27a'], bills: ['Bills Boss', '#7fe3c8', '#9aeBd6'], other: ['Group Hero', '#ffc93c', '#ffd766'] };
+  function persona(s) {
+    var key = s.category ? BYNAME[s.category.name].key : 'other', look = LOOKS[key];
+    var title = key === 'food' && s.cuisine && FOOD_TITLES[s.cuisine.name] || look[0];
+    return { title: title, bg: look[1], ray: look[2], mascot: key, line: s.count + (s.count === 1 ? ' split' : ' splits') + '. Zero awkward money talk.' };
+  }
+
   // "4 mins", "3 hours", "2 days".
   function took(ms) {
     var m = Math.max(1, Math.round(ms / 60000));
@@ -141,5 +159,5 @@
     var d = Math.round(h / 24); return d + ' days';
   }
 
-  return { cats: CATS, byKey: BYKEY, guess: guess, categoryKey: categoryKey, cuisineOf: cuisineOf, categoryOf: categoryOf, months: months, month: month, took: took, monthOf: monthOf };
+  return { cats: CATS, byKey: BYKEY, guess: guess, categoryKey: categoryKey, cuisineOf: cuisineOf, categoryOf: categoryOf, months: months, month: month, spent: spent, spentWhere: spentWhere, persona: persona, took: took, monthOf: monthOf };
 });

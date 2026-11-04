@@ -64,6 +64,11 @@ async function suite(name, call) {
   assert.equal(r.body.bill.members.find((m) => m.id === wj.memberId).pay.status, 'paid');
   r = await call('POST', '/api/bills/' + id + '/pay', { memberId: wj.memberId, action: 'unconfirm' }, owner);
   assert.equal(r.body.bill.members.find((m) => m.id === wj.memberId).pay.status, 'sent');
+  // A friend whose slip waits can remind the payer, once in a while; the payer and someone who has not paid cannot.
+  r = await call('POST', '/api/bills/' + id + '/nudge', {}, wj.token);
+  assert.ok(r.body.bill.members.find((m) => m.id === wj.memberId).pay.nudgedAt, 'the reminder shows on the bill');
+  assert.equal((await call('POST', '/api/bills/' + id + '/nudge', {}, wj.token)).status, 429);
+  assert.equal((await call('POST', '/api/bills/' + id + '/nudge', {}, owner)).status, 400);
   r = await call('POST', '/api/bills/' + id + '/pay', { memberId: priya, action: 'markpaid' }, owner);
   assert.equal(r.body.bill.members.find((m) => m.id === priya).pay.status, 'paid');
 
@@ -376,6 +381,67 @@ function currencies() {
   assert.deepEqual([r.currency, r.total], ['JPY', 251000]);
   r = parse('RESTORAN BANGKOK JAM\nTom Yam        RM 18.00\nTotal          RM 18.00');
   assert.deepEqual([r.currency, r.total], [undefined, 1800]);
+  // Prices with thousands marks, here and abroad.
+  r = parse('Banquet 1,200.00\nDrinks 85.00\nTotal 1,285.00');
+  assert.deepEqual([r.currency, r.total, r.items.map((i) => i.line)], [undefined, 128500, [120000, 8500]]);
+  r = parse('Hotel 1.250,00\nDinner 12,00\nTotal 1.262,00 €');
+  assert.deepEqual([r.currency, r.total, r.items.map((i) => i.line)], ['EUR', 126200, [125000, 1200]]);
+  r = parse('Pizza 12,50\nWine 6,00\nTotal 18,50 €');
+  assert.deepEqual([r.currency, r.total], ['EUR', 1850]);
+  // ¥ with no cents is yen; with cents it is yuan.
+  r = parse('Tonkotsu Ramen ¥1,200\nGyoza ¥480\nTotal ¥1,680');
+  assert.deepEqual([r.currency, r.total, r.items.map((i) => i.line)], ['JPY', 168000, [120000, 48000]]);
+  assert.equal(parse('Dumplings ¥28.00\nTea ¥12.00\nTotal ¥40.00').currency, 'CNY');
+  assert.deepEqual(parse('Ramen ¥1, 200\nGyoza ¥480\nTotal ¥1,680').items.map((i) => i.line), [120000, 48000]);
+  // Japanese and Korean, as their own readers print them: spaced-out characters, labels, tax already inside.
+  r = parse('ラ ー メ ン 1,200円\n餃 子 480円\n小 計 1,680円\n(内税 ¥152)\n合 計 ¥1,680\nお預り ¥2,000\nお釣り ¥320', { currency: 'JPY' });
+  assert.deepEqual([r.total, r.sst, r.items.map((i) => i.name + ' ' + i.line)], [168000, 0, ['ラーメン 120000', '餃子 48000']]);
+  r = parse('비빔밥 12,000\n김치찌개 9,000\n공급가액 19,091\n부가세 1,909\n합계 21,000\n카드 21,000', { currency: 'KRW' });
+  assert.deepEqual([r.total, r.sst, r.items.map((i) => i.name + ' ' + i.line)], [2100000, 0, ['비빔밥 1200000', '김치찌개 900000']]);
+  assert.deepEqual([parse('Ramen \\1,200\nGyoza \\480\nTotal \\1,680').currency], ['JPY'], 'yen read as a backslash');
+  // Slips with no readable "total" word and no dishes: repeated amount, or paid less change.
+  r = parse('2026年02月18日 10:35 No:1234\n会員番号 1234\n伝票番号 00039\n商品区分 990\n金 pe ¥4, 390\nVISA $4, 390', { currency: 'JPY' });
+  assert.deepEqual([r.total, r.items.map((i) => i.line)], [439000, [439000]]);
+  r = parse('2026年02月22日 19:33\nレギュラー 28.71L\nお預り \\10.000\nお釣り ¥5,521\n(155円) x4\n内消費税等 ¥407', { currency: 'JPY' });
+  assert.equal(r.total, 447900, 'paid less change, not the change');
+  assert.equal(parse('Coffee x1\nNo 2107 ¥1,200\n=Et ¥980\nVISA ¥980', { currency: 'JPY' }).onlyTotal, true, 'lines that miss the total are not dishes');
+  r = parse('醤油ラーメン ¥1,200\n餃子 ¥480\n=Et ¥1,680\n(内税 ¥152)\nHEN ¥1,680', { currency: 'JPY' });
+  assert.deepEqual([r.total, r.onlyTotal, r.items.map((i) => i.line)], [168000, undefined, [120000, 48000]], 'dishes stay when they reach the total');
+  assert.equal(parse('Burger 12.50\nFries 4.00\nJotal 16.50').total, 1650, 'a misread total label');
+  assert.equal(parse('Burger 12.50\nFries 4.00\nTotal £16 . 50').total, 1650, 'a price split at its point');
+  r = parse('かぼちゃ \\150\nポテト \\230\n小計 \\380\n外税8%対象額 \\380\n外税8% \\30\n合計 \\410', { currency: 'JPY' });
+  assert.deepEqual([r.total, r.sst, r.items.map((i) => i.line)], [41000, 3000, [15000, 23000]], 'a tax base is not a dish');
+  r = parse('小籠包 220\n酸辣湯 90\n炒飯 140\n合計 450\n現金 500\n找零 50', { currency: 'TWD' });
+  assert.deepEqual([r.total, r.onlyTotal, r.items.map((i) => i.line)], [45000, undefined, [22000, 9000, 14000]]);
+  assert.equal(require('./public/receipt-parse.js').mergeNames('BERL ¥32.00\n合计 ¥32.00', '鱼香肉丝 Y2.00\n合计 闻32.00'), '鱼香肉丝 ¥32.00\n合计 ¥32.00', 'names from one reading, prices from the other');
+  // One decimal, "price qty total" columns, a code on the name, a dish on two lines, the total beside the item count.
+  r = parse('Junk\nGolden Dragon 金龙饭店 cl\n时间: 2017-11-09 13:13:39\n品名 单价 数量 金额\nFD2鱼贴 Fish 16.8 1 16.8\nFD5锅贴 Pork 14.8 2 29.6\n总件数:3 价格:46.40', { currency: 'CNY' });
+  assert.deepEqual([r.merchant, r.total, r.date, r.items.map((i) => i.name + ' ' + i.qty + ' ' + i.line)], ['Golden Dragon 金龙饭店', 4640, '2017-11-09', ['鱼贴 Fish 1 1680', '锅贴 Pork 2 2960']]);
+  // A clear table with misread cents, a wrapped name and an amount that fell onto the next line: every dish stays.
+  r = parse('商品名 数量 单价 金额\n烤羊排(份) 1 119 .0\n0119.00\n香烤鱼 1 89 08 89.%0\n大黄鱼 ”1 39.90 39.90\n一把羊肉串配现烤\n馕(6串) 1 43.00 43.00\n小炒草原牛 1 59.09 59 60\n账单合计:349 .06\n应付金额:349.00', { currency: 'CNY' });
+  assert.deepEqual([r.total, r.onlyTotal, r.items.map((i) => i.name + ' ' + i.line)], [34900, undefined, ['烤羊排(份) 11900', '香烤鱼 8900', '大黄鱼 3900', '一把羊肉串配现烤馕(6串) 4300', '小炒草原牛 5900']]);
+  // Real dishes that fall short keep their names, with one line for what is missing.
+  r = parse('牛肉面 28.00\n饺子 12.00\n凉菜小吃 XX\n合计 ¥50.00\n微信 ¥50.00', { currency: 'CNY' });
+  assert.deepEqual([r.total, r.onlyTotal, r.items.map((i) => i.line)], [5000, undefined, [2800, 1200, 1000]]);
+  const { doubtful } = require('./public/receipt-parse.js');
+  assert.deepEqual(['37 ea', 'E GPO rk', '宫保鸡丁', '鱼贴 Fish', 'Roti Canai'].map((n) => doubtful(n, 'CNY')), [true, true, false, false, false]);
+  assert.deepEqual([doubtful('Teh C', ''), doubtful('Item not read (check receipt)', ''), doubtful('Ramen 3.0 Gyoza 6.0', '')], [false, true, true]);
+  // Chinese: labels, spaced-out characters, whole yuan, paid and change, a discount.
+  r = parse('宫 保 鸡 丁 1 38.00 38.00\n米饭 2 3.00 6.00\n小计 44.00\n合计 ¥44.00\n微信 44.00', { currency: 'CNY' });
+  assert.deepEqual([r.currency, r.total, r.items.map((i) => i.name + ' ' + i.qty + ' ' + i.line)], ['CNY', 4400, ['宫保鸡丁 1 3800', '米饭 2 600']]);
+  r = parse('牛肉面 28元\n饺子 12元\n应收 40元\n现金 50元\n找零 10元', { currency: 'CNY' });
+  assert.deepEqual([r.total, r.items.map((i) => i.line)], [4000, [2800, 1200]]);
+  r = parse('奶茶 ¥18.00\n蛋糕 ¥22.00\n优惠 -5.00\n=H ¥35.00\n微信支付 ¥35.00', { currency: 'CNY' });
+  assert.deepEqual([r.total, r.items.map((i) => i.line), r.rounding], [3500, [1800, 2200], -500]);
+  r = parse('咖啡\n单号 123456\n2026-11-04 10:30\n¥36.00\n谢谢惠顾\n¥36.00', { currency: 'CNY' });
+  assert.deepEqual([r.total, r.items.map((i) => i.line)], [3600, [3600]]);
+  // Tax printed under the total is already in the prices.
+  r = parse('Pad Thai 100.00\nTom Yum 200.00\nTotal 300.00\nVAT 7% 19.63', { currency: 'THB' });
+  assert.deepEqual([r.total, r.sst], [30000, 0]);
+  // Not ringgit, but no sign of which currency: the person chooses.
+  assert.equal(parse('Burger $12.50\nFries $4.00\nTotal $16.50').unsure, 'dollar');
+  assert.equal(parse('Bibimbap 12,000\nKimchi Jjigae 9,000\nTotal 21,000').unsure, 'whole');
+  assert.equal(parse('Nasi Lemak 13.50\nTotal 13.50').unsure, undefined);
   console.log('passed: currencies and receipts abroad');
 }
 
@@ -494,7 +560,14 @@ async function budgetSuite(name, call) {
 // Wrapped: a month of one person's spending with friends (bills and trip expenses), in RM, with who paid back
 // fastest and what the money went on.
 function wrappedStats() {
+  // Spent this month: only your own share, of bills and trips, in that month.
+  const tb = (date, picks) => ({ id: 'b', title: 'Lunch', date, createdAt: Date.parse(date), payerId: 'p', items: [{ id: 'i1', name: 'Rice', qty: 1, price: 1000 }, { id: 'i2', name: 'Tea', qty: 1, price: 300 }], service: 0, sst: 0, rounding: 0, members: [{ id: 'p', name: 'Kat', picks: ['i1'] }, { id: 'm', name: 'Aaron', picks }] });
+  const tr = { id: 't', createdAt: 1, members: [{ id: 'm', name: 'Aaron' }, { id: 'p', name: 'Kat' }], expenses: [{ id: 'e1', title: 'Hotel', date: '2026-11-02', paidBy: 'p', amount: 4000, mode: 'equal', among: ['m', 'p'], currency: 'MYR', rate: 1 }] };
+  assert.equal(require('./public/wrapped.js').spent([tb('2026-10-01', ['i2']), tb('2026-11-01', ['i2'])], '2026-11', () => 'm', [tr], () => 'm'), 300 + 2000, 'spent this month is my share only');
+  assert.equal(require('./public/wrapped.js').spentWhere([tb('2026-10-01', ['i2']), tb('2026-11-01', ['i2'])], (d) => d >= '2026-10-01' && d <= '2026-10-31', () => 'm', [tr], () => 'm'), 300, 'spent follows the dates chosen');
   const W = require('./public/wrapped.js'), T = Date.parse('2026-10-05T12:00:00Z');
+  assert.equal(W.persona({ count: 3, category: { name: 'Food & drinks' }, cuisine: { name: 'Mamak' } }).title, 'Mamak Royalty');
+  assert.deepEqual([W.persona({ count: 1, category: { name: 'Hotel & stays' } }).title, W.persona({ count: 1, category: { name: 'Hotel & stays' } }).mascot, W.persona({ count: 1 }).line], ['Staycation Star', 'stay', '1 split. Zero awkward money talk.']);
   const bill = (title, date, items, members, payer = 'me', extra = {}) => Object.assign({ title, date, createdAt: T, payerId: payer, items: items.map((n, i) => ({ id: 'i' + i, name: n[0], price: n[1] })), members }, extra);
   const m = (id, name, picks, pay) => ({ id, name, picks, pay: pay || { status: 'unpaid' } });
   const bills = [

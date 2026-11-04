@@ -385,9 +385,6 @@ h2{font-size:21px} h3{font-size:17px}
 @media (prefers-reduced-motion:reduce){.yay i,.yay .mascot svg{animation:none}}
 
 /* Checking a scanned receipt: the photo one tap away, and dishes whose price was worked out marked. */
-.peek{border:1.5px solid var(--line);border-radius:14px;padding:8px 12px;margin:6px 0 10px;background:var(--surface)}
-.peek summary{cursor:pointer;font-weight:600;color:var(--sky)}
-.peek img{display:block;width:100%;max-height:70vh;object-fit:contain;margin-top:8px;border-radius:10px;background:#fff}
 .irow.unsure input{border-color:var(--sunset);background:#fff4ec}
 .unsure-note{font-size:12px;font-weight:600;color:var(--warn);margin:8px 0 2px}
 /* "How many did you have?" under a ticked dish bought more than once. */
@@ -409,3 +406,13 @@ h2{font-size:21px} h3{font-size:17px}
 .devrow b{flex:1;min-width:0}
 /* "Show all 12 bills" under the newest 3 on the home page. */
 .morebtn{display:block;width:100%;margin:2px 0 14px}
+/* On the pass, under "You owe" and "Owed to you": what you spent this month. */
+.spentrow{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 16px;border-top:2px dashed var(--line)}
+.spentrow .k{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.spentrow b{font-size:16px;font-weight:700;color:var(--ink);white-space:nowrap}
+.bill .billsub:empty{display:none}
+.bill .billsub,.bill .small.muted{font-weight:500}
+.nowrap{white-space:nowrap}
+.peekbox{position:sticky;top:8px;z-index:5;max-height:36vh;overflow:auto;margin:8px 0;border:1.5px solid var(--line);border-radius:12px;background:#fff;box-shadow:0 8px 18px -10px rgba(20,33,61,.35)}
+.peekbox img{display:block;width:100%;cursor:zoom-in}
+.peekbox.zoom img{width:220%;max-width:none;cursor:zoom-out}

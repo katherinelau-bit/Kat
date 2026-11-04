@@ -20,7 +20,7 @@
   var SERVICE = /serv|rvice|svc|s\/c|charge|caj|perkhidmatan/i;
   var ROUNDING = /round|bundar/i;
   // Also Vietnamese "tổng cộng / thanh toán" and "tổng tiền", as the reader prints them without accents.
-  var TOTAL = /total|\bt[o0][tl][a4ei][l1i\]n]|jumlah|amount\s*due|nett|grand|\(myr\)|\(rm\)|t[oổ]ng\s*c[oộ]ng|t[oổ]ng\s*ti[eề]n|thanh\s*to[aá]n/i;
+  var TOTAL = /total|jota[l1]|\bt[o0]a\b|\bt[o0][tl][a4ei][l1i\]n]|jumlah|amount\s*due|nett|grand|\(myr\)|\(rm\)|t[oổ]ng\s*c[oộ]ng|t[oổ]ng\s*ti[eề]n|thanh\s*to[aá]n/i;
   // Add-ons printed under a dish ("• Thigh + 1.00"); their price is already in the dish's line.
   var MODIFIER = /^[^A-Za-z0-9(]*[+•·®*]|\+\s*$/;
   // "(8.90/ea)" or "(7.90/" : the price of one, printed beside or under a dish.
@@ -40,11 +40,12 @@
     return line.replace(/(\d)[Oo](?=\d|[.,])/g, '$10').replace(/([.,])[Oo]/g, '$10').replace(/[Oo](?=[.,]\d)/g, '0')
       .replace(/(\d)[lI](?=\d|[.,])/g, '$11').replace(/([.,]\d)[Oo]\b/g, '$10');
   }
-  function letters(s) { return (s.match(/[A-Za-z]/g) || []).length; }
+  // A Japanese or Korean character counts as two letters: a dish can be just two of them.
+  function letters(s) { return (s.match(/[A-Za-z]/g) || []).length + (s.match(/[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f]/g) || []).length * 2; }
   // Drops menu codes ("E01", "WO2", "AD06", "M 02", "Z03Bralsed"), price-of-one notes, "(-)" marks and stray symbols.
   function cleanName(s) {
     // Trade marks ("Soup™") and the asterisks some tills print around dishes and options ("(Dry)* *(L) Upsize") are not part of the name.
-    var t = s.replace(/[™®©℠]/g, '').replace(/\*/g, ' ').replace(EACH, ' ').replace(/^\W*[A-Z]{0,2}\d{1,4}\s*-\s*(?=[A-Za-z])/, '').replace(/\((?:\s|[-+•·*])*\)/g, ' ').replace(/^[^A-Za-z0-9]+/, '').replace(/^[a-z]{1,2}\s+(?=[A-Z0-9])|^[A-Za-z]{1,2}\s+(?=[A-Z]{1,3}\s?\d)/, '');
+    var t = s.replace(/[™®©℠]/g, '').replace(/\*/g, ' ').replace(EACH, ' ').replace(/^\W*[A-Z]{0,2}\d{1,4}\s*-\s*(?=[A-Za-z])/, '').replace(/\((?:\s|[-+•·*])*\)/g, ' ').replace(/^[^A-Za-z0-9\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f]+/, '').replace(/^[A-Za-z]{1,3}\d{1,3}(?=[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f])/, '').replace(/^[a-z]{1,2}\s+(?=[A-Z0-9])|^[A-Za-z]{1,2}\s+(?=[A-Z]{1,3}\s?\d)/, '');
     for (var k = 0; k < 2; k++) {
       var m = t.match(/^(?:[A-Z]{1,3}\s?)?[0-9O]{1,3}(?=\s*[A-Z])/);
       if (m && /\d/.test(m[0])) t = t.slice(m[0].length).replace(/^\s+/, '');
@@ -58,8 +59,8 @@
     var keep = words.filter(function (w, i) {
       var core = w.replace(/^[(]+|[),.:;]+$/g, '');
       if (!core) return false;
-      if (/[^\x20-\x7E\u00C0-\u017F]|[#$%^@{}<>|\\_~;"“”‘’`]/.test(core)) return false;
-      if (!/[A-Za-z0-9&]/.test(core)) return false;
+      if (/[^\x20-\x7E\u00C0-\u017F\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f]|[#$%^@{}<>|\\_~;"“”‘’`]/.test(core)) return false;
+      if (!/[A-Za-z0-9&\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f]/.test(core)) return false;
       if (mixed && (/^\d+[.,:]\d{2}$/.test(w) || /^\(?\d+\)?$/.test(w) && /[()]/.test(w) || /\+/.test(w))) return false;
       // A stray one- or two-letter scrap at the end ("Soup ia").
       if (mixed && i === words.length - 1 && /^[a-z]{1,2}$/i.test(core) && !/^(?:ok|xl|up)$/i.test(core)) return false;
@@ -79,22 +80,26 @@
   // Splits "2 x Roti Canai", "Roti Canai x2", "Roti Canai 2 @ 2.20" or "Roti Canai  2  2.20" into a name and quantity.
   function nameAndQty(text, line) {
     var t = text.trim().replace(/^\S{1,3}\s+(?=\d{1,2}\s*[xX×]\s+[A-Za-z])/, ''), qty = 1, m;
-    if ((m = t.match(/^(\d{1,2})\s*[xX×*]\s*(.+)$/)) || (m = t.match(/^(\d{1,2})\s+([A-Za-z].+)$/))) { qty = +m[1]; t = m[2]; }
+    if ((m = t.match(/^(\d{1,2})\s*[xX×*]\s*(.+)$/)) || (m = t.match(/^(\d{1,2})\s+([A-Za-z\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f].+)$/))) { qty = +m[1]; t = m[2]; }
     else if ((m = t.match(/^(.+?)\s*[xX×]\s*(\d{1,2})$/))) { t = m[1]; qty = +m[2]; }
+    // Trailing "unit price qty" columns before the line total ("Fish  16.80  1  16.80").
+    if ((m = t.match(/^(.*?[A-Za-z\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f].*?)\s+(?:RM\s*)?(\d{1,4}[.,]\d{2})\s+(\d{1,2})$/)) && toSen(m[2]) * +m[3] === line) { t = m[1]; qty = +m[3]; }
     // Trailing "qty @ unit price" or "qty unit price" columns before the line total.
-    if ((m = t.match(/^(.*?[A-Za-z].*?)\s+(\d{1,2})\s*(?:[@xX×]\s*)?(?:RM\s*)?(\d{1,4}[.,]\d{2})$/))) {
+    else if ((m = t.match(/^(.*?[A-Za-z\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f].*?)\s+(\d{1,2})\s*(?:[@xX×]\s*)?(?:RM\s*)?(\d{1,4}[.,]\d{2})$/))) {
       var q = +m[2], each = toSen(m[3]);
       if (q >= 1 && each && Math.abs(q * each - line) <= 1) { t = m[1]; qty = q; }
-    } else if ((m = t.match(/^(.*?[A-Za-z].*?)\s+(?:RM\s*)?(\d{1,4}[.,]\d{2})$/))) {
+    } else if ((m = t.match(/^(.*?[A-Za-z\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f].*?)\s+(?:RM\s*)?(\d{1,4}[.,]\d{2})$/))) {
       // "Name  2.20" before a line total of 4.40: a unit price column without a qty column.
       var u = toSen(m[2]);
       if (u && line % u === 0 && line / u >= 1 && line / u <= 50) { t = m[1]; qty = qty > 1 ? qty : line / u; }
-    } else if ((m = t.match(/^(.*?[A-Za-z].*?)\s+(\d{1,2})\s+(\d{3,5})$/)) && +m[2] * +m[3] === line) {
+    } else if ((m = t.match(/^(.*?[A-Za-z\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f].*?)\s+(\d{1,2})\s+(\d{3,5})$/)) && +m[2] * +m[3] === line) {
       // "Kopi O Peng 3 280": the reader dropped the decimal point of the unit price.
       t = m[1]; qty = +m[2];
-    } else if ((m = t.match(/^(.*?[A-Za-z].*?)\s+(\d{1,2})$/))) { t = m[1]; qty = +m[2]; }
+    } else if ((m = t.match(/^(.*?[A-Za-z\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f].*?)\s+(\d{1,2})$/))) { t = m[1]; qty = +m[2]; }
     // A quantity must divide the line into a whole price of at least RM 1; otherwise it is a misread menu code.
     if (qty > 1 && (line % qty !== 0 || line / qty < 100)) qty = 1;
+    // A misread price of one, left behind a Chinese, Japanese or Korean name.
+    if (/[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3]/.test(t)) t = t.replace(/\s+\d{1,4}\.\d{2}(?:\s+\d{1,2})?$/, '');
     var it = { name: cleanName(t), qty: Math.max(1, Math.round(qty) || 1), line: line };
     var e = eachOf(t);
     if (e) fitEach(it, e);
@@ -393,33 +398,190 @@
 
   // Receipts from abroad: which currency, by its signs and codes (none found: ringgit). Used to pick the bill's currency.
   // Signs and codes only: a place name ("Bangkok Kitchen" in KL) says nothing about the currency.
-  var MARKS = [['MYR', /\bRM\s?\d|\bMYR\b|\bSST\b|\bcukai\b/gi], ['SGD', /S\$|\bSGD\b/g], ['THB', /฿|\bTHB\b|\bbaht\b/gi], ['CNY', /\bRMB\b|\bCNY\b|￥|元/g],
+  var MARKS = [['MYR', /\bRM\s?\d|\bMYR\b|\bSST\b|\bcukai\b/gi], ['SGD', /S\$|\bSGD\b/g], ['THB', /฿|\bTHB\b|\bbaht\b/gi], ['CNY', /\bRMB\b|\bCNY\b|元|[¥￥]\s?\d[\d,]*\.\d{2}/g],
     ['VND', /₫|\bVND\b|\d\s?đ(?=\s|$)/gim], ['IDR', /\bIDR\b|\bRp\.?\s?\d/g], ['USD', /US\$|\bUSD\b/g], ['EUR', /€|\bEUR\b/g], ['GBP', /£|\bGBP\b/g],
-    ['JPY', /\bJPY\b|円/g], ['KRW', /₩|\bKRW\b/g], ['HKD', /HK\$|\bHKD\b/g], ['TWD', /NT\$|\bTWD\b/g], ['AUD', /A\$|\bAUD\b/g], ['PHP', /₱|\bPHP\b/g]];
+    ['JPY', /\bJPY\b|円|[¥￥\\]\s?\d[\d,]*(?![\d,.])/g], ['KRW', /₩|\bKRW\b/g], ['HKD', /HK\$|\bHKD\b/g], ['TWD', /NT\$|\bTWD\b/g], ['AUD', /A\$|\bAUD\b/g], ['PHP', /₱|\bPHP\b/g]];
   function detectCurrency(text) {
     var best = 'MYR', top = 0;
     MARKS.forEach(function (m) { var n = (String(text || '').match(m[1]) || []).length; if (n > top) { top = n; best = m[0]; } });
     return top ? best : '';
   }
   var WHOLE = { VND: 1, IDR: 1, JPY: 1, KRW: 1, TWD: 1 };
+  // Japanese fonts draw ¥ so that the reader often takes it for a backslash.
   // Prices abroad: currency signs and codes around numbers go; in currencies without cents (dong, rupiah, yen, won)
   // "150.000", "65,000" or "65000" are whole amounts, written as "150000.00" so the ringgit rules read them.
   function normalise(text, cur) {
-    var t = String(text || '').replace(/(S\$|US\$|HK\$|NT\$|A\$|\$|฿|￥|¥|€|£|₫|₩|₱)\s*(?=-?\d)/g, '')
+    var t = String(text || '').replace(/(^|[^\d.,])(\d{1,6})\s*元/gm, WHOLE[cur] ? '$1$2元' : '$1$2.00元').replace(/(S\$|US\$|HK\$|NT\$|A\$|\$|฿|￥|¥|\\|€|£|₫|₩|₱)\s*(?=-?\d)/g, '').replace(cur === 'CNY' || cur === 'JPY' ? /\bY\s*(?=\d)/g : /(?!)/, '')
       .replace(/\b(?:SGD|THB|USD|EUR|GBP|CNY|RMB|VND|IDR|JPY|KRW|HKD|TWD|AUD|PHP|Rp\.?)\s*(?=-?\d)/g, '')
-      .replace(/(\d)\s*(?:₫|đ|VND|vnd|THB|SGD|USD|EUR|IDR|JPY|KRW|円|元)(?=\s|$)/g, '$1');
+      .replace(/(\d)\s*(?:₫|đ|฿|€|£|¥|￥|₩|₱|VND|vnd|THB|SGD|USD|EUR|GBP|IDR|JPY|KRW|HKD|TWD|AUD|PHP|CNY|RMB|円|元)(?=\s|$)/g, '$1');
     if (!WHOLE[cur]) return t;
     return t.split(/\r?\n/).map(function (l) {
-      return l.replace(/(^|[^\d.,])(\d{1,3}(?:[.,]\d{3})+)(?![.,]?\d)/g, function (m, pre, n) { return pre + n.replace(/[.,]/g, '') + '.00'; })
-        .replace(/(^|[^\d.,])(\d{3,9})(?=\s*$|\s+\d)/g, function (m, pre, n) { return pre + n + '.00'; });
+      // The reader sometimes puts a space after the mark ("1, 200").
+      return l.replace(/(\d[.,])\s(?=\d{3}(?!\d))/g, '$1').replace(/(^|[^\d.,])(\d{1,3}(?:[.,]\d{3})+)(?![.,]?\d)/g, function (m, pre, n) { return pre + n.replace(/[.,]/g, '') + '.00'; })
+        .replace(/(^|[^\d.,])(\d{3,9})(?=\s*$|\s+\d)/g, function (m, pre, n) { return pre + n + '.00'; })
+        // Taiwan dollars: a dish can be two digits ("酸辣湯 90").
+        .replace(/([\u3400-\u9fff]\s+)(\d{2})\s*$/, function (m, a, b) { return cur === 'TWD' ? a + b + '.00' : m; });
     }).join('\n');
   }
 
+  // Thousands marks go, so the amount rules read them: "1,200.00" and "1.200,00" both become "1200.00".
+  function plainThousands(text) {
+    // The reader can also split a price at its point: "33 . 26" at the end of a line.
+    return String(text || '').replace(/(\d) ?\. (\d{2})\s*$|(\d) \.(\d{2})\s*$/gm, function (m, a, b, c, d) { return (a || c) + '.' + (b || d); }).replace(/(^|[^\d.,])(\d{1,3}(?:,\d{3})+)\.(\d{2})(?!\d)/gm, function (m, pre, n, c) { return pre + n.replace(/,/g, '') + '.' + c; })
+      .replace(/(^|[^\d.,])(\d{1,3}(?:\.\d{3})+),(\d{2})(?!\d)/gm, function (m, pre, n, c) { return pre + n.replace(/\./g, '') + '.' + c; });
+  }
+  // No currency found, but it is not ringgit either: "$" could be any dollar; prices like "12,000" with no cents anywhere
+  // are yen, won, dong or rupiah. The person has to choose, so nothing is counted as ringgit by mistake.
+  function unsure(text) {
+    if (/\$\s?\d/.test(text)) return 'dollar';
+    var grouped = (text.match(/(?:^|[^\d.,])\d{1,3}[.,]\d{3}(?![\d.,])/gm) || []).length;
+    return grouped >= 2 && !/\d[.,]\d{2}\s*[A-Z*]{0,2}\s*\|?\s*$/m.test(text) ? 'whole' : '';
+  }
+  // Tax already inside the prices, as in Thailand, Japan or Europe ("Total 300.00, VAT 7% 19.63"): when the dishes reach the
+  // total without it, it is only a note on the receipt and must not be added on top.
+  function taxInside(r) {
+    var sum = (r.service || 0) + (r.rounding || 0);
+    r.items.forEach(function (i) { sum += i.line; });
+    if (r.total && r.sst && r.items.length && Math.abs(sum - r.total) <= 1) r.sst = 0;
+    return r;
+  }
+  // Japanese and Korean receipts: the reader spaces out the characters, and the labels become the English ones the rules know.
+  var CJK = { JPY: 1, KRW: 1, CNY: 1, TWD: 1, HKD: 1 };
+  var CJK_GAP = /([\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f]) +(?=[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f])/g;
+  var LABELS = [
+    [/^(?:\d{4}\s*[年\/.-]|内税|内消費税|内\s?消費|\(内|（内|税率|\d+%対象|対象|伝票|レジ|担当|電話|登録番号|店舗|客数|人数|テーブル|卓番|ご利用日|カード会社|会員番号|端末番号|有効期限|取引内容|商品区分|車両番号|单号|單號|流水|订单|訂單|收银|收銀|机号|機號|台号|桌号|桌號|人数|人數|电话|電話|地址|日期|时间|時間|会员|會員|发票|發票|税号|稅號|店号|工号|小票|交易号|商户|商戶|면세|영수증|사업자|전화|대표|주소|승인번호|카드번호|단말기|테이블|인원)/, ''],
+    [/^(?:小計|小计|税抜|未税|未稅|소계|공급가액|과세물품|과세)[^\d]*/, 'Subtotal '],
+    [/^(?:外税|消費税等?|税額?|税额|稅額|增值税|营业税|營業稅|부가가치세|부가세|세액)[^\d]*/, 'Tax '],
+    [/^(?:サービス料|奉仕料|服务费|服務費|봉사료)[^\d]*/, 'Service '],
+    [/^(?:お?預り?かり?|現金|现金|实收|實收|已收|收款|找零|找赎|找贖|微信|支付宝|支付寶|银联|銀聯|刷卡|扫码|掃碼|优惠|優惠|折扣|抹零|お?釣り?銭?|クレジット|カード|ポイント|받은금액|현금|신용카드|카드|거스름돈|할인)[^\d]*/, 'Cash '],
+    [/^(?:総合計|税込合計|合計|合计|账单合计|帳單合計|帐单合计|总计|總計|应收|應收|应付|應付|实付|實付|总额|總額|总金额|總金額|消费合计|お?会計|ご?請求(?:金額|額)?|お買上げ?(?:計|金額)?|합계금액|총합계|합계|총액|총계|결제금액|받을금액|청구금액|판매총액)[^\d]*/, 'Total ']
+  ];
+  var CJK_DATE = /(\d{4})\s*[-\/.年]\s*(\d{1,2})\s*[-\/.月]\s*(\d{1,2})/;
+  function cjkLabels(text) {
+    return text.split(/\r?\n/).map(function (l) {
+      var t = l.replace(CJK_GAP, '$1').replace(CJK_GAP, '$1').replace(/^[\s*※#-]+/, '')
+        // Prices with one decimal ("16.8"), and the total printed beside the item count ("总件数:3  价格:46.40").
+        .replace(/(^|\s)(\d{1,5}\.\d)(?=\s|$)/g, '$1$20').replace(/(\d\.\d{2})\s+[A-Za-z]{1,4}\s*$/, '$1').replace(/^.*?(?:总件数|總件數|总数量|總數量)\S*\s+\S*?(?:价格|價格|总价|總價|金额|金額)[:：]?\s*/, '合计 ');
+      var day = t.match(CJK_DATE);
+      if (day) return 'Date ' + day[3] + '/' + day[2] + '/' + day[1];
+      if (/対象|商品数|点数/.test(t)) return ''; // Tax bases and item counts, anywhere on the line.
+      for (var k = 0; k < LABELS.length; k++) if (LABELS[k][0].test(t)) return LABELS[k][1] ? t.replace(LABELS[k][0], LABELS[k][1]) : '';
+      return t;
+    }).join('\n');
+  }
+  // Card slips, petrol and shop receipts: the word for "total" is often unreadable, but the amount is not. It is the ¥ amount
+  // printed more than once, or what was handed over less the change, or the only ¥ amount there is. When the lines found
+  // do not reach it they are not dishes, so the bill gets one line for the whole receipt.
+  var CJK_AMOUNT = /[¥￥\\$₩Y]\s*(\d[\d,]*\.\d{2}(?!\d)|\d{1,3}(?:[,.\s]{1,3}\d{3})+|\d{2,7})(?!\d)|(\d[\d,]*\.\d{2}(?!\d)|\d{1,3}(?:[,.]\d{3})+|\d{2,7})\s*[円원元]/;
+  // A table of dishes: name, quantity, price of one, amount. The reader often misreads the cents ("39.90", "59 60", "89.%0")
+  // but rarely the whole part, and a name can wrap onto the line above. When the amount fell onto the next line, it is the
+  // quantity times the price of one.
+  var ROW_NUM = '(\\d{1,5})(?:\\s*[.,]\\s*|\\s)([\\d%OoQ]{1,2})';
+  var ROW_FULL = new RegExp('^(.*?)\\s+[^\\s\\d]?(\\d{1,2})\\s+' + ROW_NUM + '\\s+' + ROW_NUM + '$'), ROW_HALF = new RegExp('^(.*?)\\s+[^\\s\\d]?(\\d{1,2})\\s+(\\d{1,5})\\s*[.,]\\s*\\d{0,2}$');
+  function cjkTable(text) {
+    var rows = [], wrap = '', skip = false, name = function (s) { return cleanName((wrap + s).replace(/^.*[“”"]\s*/, '').replace(CJK_GAP, '$1').replace(/[《（]/g, '(').replace(/[》）]/g, ')').trim()).replace(/\)+$/, ')') || 'Item'; };
+    cjkLabels(String(text || '')).split('\n').forEach(function (l) {
+      var t = l.trim().replace(/\s+[^\s\d.,)）]{1,2}$/, '').replace(/[”"“|]+$/, '').trim(), m = t.match(ROW_FULL), h = !m && t.match(ROW_HALF);
+      if (m && /[A-Za-z\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f]/.test(m[1])) { rows.push({ name: name(m[1]), qty: +m[2], whole: +m[5] * 100, cents: /^\d\d$/.test(m[6]) ? +m[6] : 0 }); wrap = ''; skip = false; return; }
+      if (h && /[A-Za-z\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f]/.test(h[1])) { rows.push({ name: name(h[1]), qty: +h[2], whole: +h[2] * +h[3] * 100, cents: 0 }); wrap = ''; skip = true; return; }
+      if (skip) { skip = false; if (!/[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f]/.test(t)) return; }
+      wrap = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f]{3,}/.test(t) && !/\d/.test(t) && !/^(?:商品|品名|菜品|菜名|名称|名稱)/.test(t) ? t.replace(/^[^\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9fA-Za-z]+/, '') : '';
+    });
+    return rows.length >= 2 ? rows : null;
+  }
+  function addGap(r, total) {
+    var sum = (r.service || 0) + (r.rounding || 0) + (r.sst || 0);
+    r.items.forEach(function (i) { sum += i.line; });
+    if (total - sum > 1) { r.items.push({ name: NOT_READ, qty: 1, line: total - sum, each: total - sum, filled: true }); r.filled = (r.filled || 0) + 1; }
+  }
+  function cjkTotal(r, text) {
+    var seen = {}, paid = 0, change = 0, top = 0, most = 0;
+    String(text || '').split(/\r?\n/).forEach(function (l) {
+      var t = l.replace(CJK_GAP, '$1').replace(CJK_GAP, '$1'), m = t.match(CJK_AMOUNT);
+      if (!m) return;
+      var a = m[1] || m[2], n = /\.\d{2}$/.test(a) ? Math.round(+a.replace(/,/g, '') * 100) : +a.replace(/\D/g, '') * 100;
+      if (/預|받은|实收|實收|已收|现金|現金/.test(t)) paid = n; else if (/釣|거스|找零|找赎|找贖/.test(t)) change = n;
+      else if (!/内税|内消費|消費税等|小\s?[計计]|税抜|外税|未[税稅]|税额|稅額|优惠|優惠|折扣|소계|부가세|세액/.test(t)) seen[n] = (seen[n] || 0) + 1;
+    });
+    var kinds = Object.keys(seen);
+    kinds.forEach(function (n) { if (seen[n] > most) { most = seen[n]; top = +n; } });
+    var read = (r.service || 0) + (r.rounding || 0) + (r.sst || 0);
+    r.items.forEach(function (i) { read += i.line; });
+    if (r.total && r.items.length && Math.abs(read - r.total) <= 1) return r; // The receipt's own total, and it adds up.
+    var total = r.total && seen[r.total] ? r.total : most >= 2 ? top : paid > change && change ? paid - change : kinds.length === 1 ? +kinds[0] : r.total;
+    if (!total) return r;
+    var table = cjkTable(text);
+    if (table) {
+      var charges = (r.service || 0) + (r.rounding || 0) + (r.sst || 0), whole = 0, exact = 0;
+      table.forEach(function (d) { whole += d.whole; exact += d.whole + d.cents; });
+      // Prices with no real cents: the whole parts reach the total, so the cents were misreads.
+      var keepCents = Math.abs(exact + charges - total) <= 1, round = !keepCents && Math.abs(whole + charges - total) < 100, fits = keepCents || round;
+      if (fits || Math.abs(whole + charges - total) <= total * 0.4) {
+        r.items = table.map(function (d) { var line = keepCents ? d.whole + d.cents : d.whole; return { name: d.name, qty: d.qty, line: line, each: Math.round(line / d.qty) }; });
+        r.total = round ? whole + charges : total; r.filled = 0; delete r.onlyTotal;
+        if (!fits) addGap(r, total);
+        return r;
+      }
+    }
+    var sum = (r.service || 0) + (r.rounding || 0), dishes = r.items;
+    // The total itself, read under an unreadable label, is not a dish.
+    if (dishes.length > 1) dishes = dishes.filter(function (i) { return i.line !== total && i.line !== paid && i.line !== change; });
+    dishes.forEach(function (i) { sum += i.line; });
+    r.total = total;
+    if (dishes.length && (Math.abs(sum - total) <= 1 || Math.abs(sum + (r.sst || 0) - total) <= 1)) { r.items = dishes; return r; }
+    // A discount or small change waived: the dishes are right and the difference comes off.
+    if (dishes.length && sum > total && /优惠|優惠|折扣|抹零/.test(text)) { r.items = dishes; r.sst = 0; r.rounding = (r.rounding || 0) + total - sum; return r; }
+    // Tax is added after the dishes and rounded down in Japan, so up to 12% over is the tax itself.
+    if (dishes.length && total > sum && total - sum <= sum * 0.12) { r.items = dishes; r.sst = total - sum; return r; }
+    // Real dishes that nearly reach the total stay: what is missing shows as one line to check, so nothing is lost.
+    var named = dishes.filter(function (i) { return /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f]{2}/.test(i.name); });
+    if (named.length >= 2 && sum >= total * 0.5 && sum <= total * 1.3) { r.items = dishes; addGap(r, total); return r; }
+    r.items = [{ name: 'Receipt total', qty: 1, line: total, each: total }];
+    r.service = r.sst = r.rounding = r.filled = 0; r.merchant = ''; r.onlyTotal = true;
+    return r;
+  }
+  // The shop: the first line near the top with Chinese, Japanese or Korean words, with any English name before them.
+  function cjkShop(text) {
+    var lines = String(text || '').split(/\r?\n/).slice(0, 14), found = '';
+    lines.some(function (l) {
+      var t = l.replace(CJK_GAP, '$1').replace(CJK_GAP, '$1'), m = t.match(/(?:[A-Z][A-Za-z]+ ){0,4}[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f]{2,12}/);
+      if (!m || /\d|[:：]/.test(t) || /品名|菜品|单价|單價|数量|數量|金额|金額|税|稅|様|ます|売上|領収|控|谢|謝|欢迎|歡迎|发票|發票|单$|單$|小票|收据|收據|영수증/.test(m[0])) return false;
+      found = m[0].trim();
+      return true;
+    });
+    return found;
+  }
+  // A dish name the reader probably got wrong, for the form to mark. Abroad in Asia, English scraps stand for unread words.
+  function doubtful(name, cur) {
+    var n = String(name || '').trim();
+    if (!n || n === NOT_READ || /\d[.,]\d/.test(n)) return true;
+    if (!CJK[cur]) return false;
+    var words = n.split(/\s+/).filter(function (w) { return /[A-Za-z0-9]/.test(w); });
+    var noVowel = words.some(function (w) { return /^[A-Za-z]{2,}$/.test(w) && !/[aeiouy]/i.test(w); });
+    if (new RegExp('[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3\uff66-\uff9f]{2}').test(n)) return noVowel;
+    return n.length < 4 || noVowel || /^[A-Z\s]+$/.test(n) || words.some(function (w) { return w.length <= 2; });
+  }
+  // The reader with English added reads prices well but can turn dish names into English junk; the reader with only the
+  // local language reads names well but garbles prices. Line by line, this keeps the name from one and the price from the other.
+  var CJK_CHAR = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3]/g, PRICE_END = /\s+\S*\d[\d.,]*\S*\s*$/;
+  function mergeNames(mixed, local) {
+    var a = String(mixed || '').split(/\r?\n/).filter(function (l) { return l.trim(); }), b = String(local || '').split(/\r?\n/).filter(function (l) { return l.trim(); });
+    if (a.length !== b.length) return mixed;
+    return a.map(function (l, i) {
+      var price = l.match(PRICE_END), name = b[i].replace(PRICE_END, '');
+      if (!price) return l;
+      var count = function (s) { return (s.match(CJK_CHAR) || []).length; };
+      return count(name) > count(l.slice(0, price.index)) ? name + price[0] : l;
+    }).join('\n');
+  }
   // `opts.currency`: the bill's currency, if the person already chose one; otherwise it is read off the receipt.
   function parse(text, opts) {
-    var cur = (opts && opts.currency && opts.currency !== 'MYR' ? opts.currency : '') || detectCurrency(text) || 'MYR';
-    var r = parseText(cur === 'MYR' ? text : normalise(text, cur));
+    var chosen = opts && opts.currency && opts.currency !== 'MYR' ? opts.currency : '';
+    var cur = chosen || detectCurrency(text) || 'MYR', plain = plainThousands(CJK[cur] ? cjkLabels(String(text || '')) : text);
+    var r = cur === 'MYR' ? parseText(plain) : taxInside(parseText(normalise(plain, cur)));
+    if (CJK[cur]) { r = cjkTotal(r, text); r.merchant = cjkShop(text) || r.merchant; }
     if (cur !== 'MYR') r.currency = cur;
+    else if (!detectCurrency(text)) { var u = unsure(plain); if (u) r.unsure = u; }
     return r;
   }
   function parseText(text) {
@@ -497,13 +659,14 @@
     r.items.forEach(function (i) { sum += i.line; if (i.name === NOT_READ) guess = 15; });
     // A total that disagrees with the cash paid less the change printed on the same receipt is very likely wrong.
     var paidOff = r.paid && r.total && Math.abs(r.paid - r.total) > 2 ? 25 : 0;
-    return r.items.length + (r.total ? 2 : 0) + (r.service ? 1 : 0) + (r.sst ? 1 : 0) + (r.total && r.items.length && Math.abs(sum - r.total) <= 2 ? 20 : 0)
+    return r.items.length + (r.total ? 12 : 0) + (r.service ? 1 : 0) + (r.sst ? 1 : 0) + (r.total && r.items.length && Math.abs(sum - r.total) <= 2 ? 20 : 0)
       - 3 * (r.filled || 0) - guess - paidOff;
   }
   // Read cleanly: adds up with nothing worked out.
   function balanced(r) { return score(r) >= 20 && !r.filled; }
   // Good enough to stop reading: adds up, with at most one dish's price worked out and no "Item not read" line.
   function goodEnough(r) {
+    if (r.onlyTotal) return false; // Keep trying for the dishes; the total stays if none of the tries finds them.
     return balanced(r) || (r.filled === 1 && score(r) >= 20 && !r.items.some(function (i) { return i.name === NOT_READ; }));
   }
   // The most believable reading; a date or shop name it missed is taken from the other readings of the same photo.
@@ -539,5 +702,5 @@
     return all.length ? { result: 'mismatch', amount: all[0] } : { result: 'unread', amount: 0 };
   }
 
-  return { parse: parse, detectCurrency: detectCurrency, rowsFromBlocks: rowsFromBlocks, tilt: tilt, binarize: binarize, best: best, balanced: balanced, goodEnough: goodEnough, slipAmounts: slipAmounts, checkSlip: checkSlip };
+  return { parse: parse, doubtful: doubtful, mergeNames: mergeNames, cjkShop: cjkShop, detectCurrency: detectCurrency, rowsFromBlocks: rowsFromBlocks, tilt: tilt, binarize: binarize, best: best, balanced: balanced, goodEnough: goodEnough, slipAmounts: slipAmounts, checkSlip: checkSlip };
 });
